@@ -16,6 +16,12 @@ extern "stdcall" {
     fn GetDC(hWnd: HWND) -> HDC;
 }
 
+struct Backbuffer {
+    width: usize,
+    height: usize,
+    hdc: HDC,
+}
+
 fn main() {
     let mut events_loop = winit::EventsLoop::new();
     let window = winit::Window::new(&events_loop).unwrap();
@@ -23,16 +29,17 @@ fn main() {
     let h_wnd = window.get_hwnd();
     let hdc = unsafe { GetDC(h_wnd) };
 
-    // 0x00bbggrr
-    let color: COLORREF = 0x000000FF;
+    let size = window.get_inner_size().unwrap();
 
-    for i in 0..200 {
-        unsafe {
-            SetPixel(hdc, 25 + i, 25, color);
-        }
-    }
+    let backbuffer = Backbuffer {
+        width: size.width as usize, // from f64
+        height: size.height as usize, // from f64
+        hdc: hdc,
+    };
 
     events_loop.run_forever(|event| {
+        render(&backbuffer);
+
         match event {
             winit::Event::WindowEvent {
               event: winit::WindowEvent::CloseRequested,
@@ -41,4 +48,17 @@ fn main() {
             _ => winit::ControlFlow::Continue,
         }
     });
+}
+
+fn render(backbuffer: &Backbuffer) {
+    for y in 0..backbuffer.height as i32 {
+        for x in 0..backbuffer.width as i32 {
+            // 0x00bbggrr
+            let color: COLORREF = 0x000000FF;
+
+            unsafe {
+                SetPixel(backbuffer.hdc, x, y, color);
+            }
+        }
+    }
 }
