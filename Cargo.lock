@@ -210,6 +210,7 @@ dependencies = [
 name = "pathtracer"
 version = "0.1.0"
 dependencies = [
+ "libc 0.2.42 (registry+https://github.com/rust-lang/crates.io-index)",
  "winit 0.16.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 

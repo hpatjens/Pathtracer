@@ -5,3 +5,4 @@ authors = ["Henrik Patjens <hpatjens@gmail.com>"]
 
 [dependencies]
 winit = "0.16.2"
+libc = "0.2.42"
