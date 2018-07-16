@@ -1,64 +1,80 @@
-extern crate winit;
-extern crate libc;
+extern crate glium;
+extern crate glutin;
 
-use winit::os::windows::WindowExt;
+use glium::glutin::dpi::LogicalSize;
 
-type COLORREF = libc::c_uint;
-type HDC = *mut libc::c_void;
-type HWND = *mut libc::c_void;
-
-// Only windows is supported right now.
-//#[cfg(all(target_os = "win32", target_arch = "x86"))]
-#[link(name = "kernel32")]
-#[allow(non_snake_case)]
-extern "stdcall" {
-    fn SetPixel(hdc: HDC, x: libc::c_int, y: libc::c_int, color: COLORREF) -> COLORREF;
-    fn GetDC(hWnd: HWND) -> HDC;
+#[link(name = "opengl32")]
+extern "C" {
+    fn glDrawPixels(width: u32, height: u32, format: i32, component_type: i32, data: *const u8);
 }
 
+const GL_RGB: i32 = 0x1907;
+const GL_UNSIGNED_BYTE: i32 = 0x1401;
+
+#[derive(Clone)]
+struct Pixel(u8, u8, u8);
+
 struct Backbuffer {
-    width: usize,
-    height: usize,
-    hdc: HDC,
+    width: u32,
+    height: u32,
+    pixels: Vec<Pixel>,
+}
+
+impl Backbuffer {
+    fn new(width: u32, height: u32) -> Backbuffer {
+        Backbuffer {
+            width: width,
+            height: height,
+            pixels: {
+                let mut pixels = Vec::new();
+                let num_pixels = (width * height) as usize;
+                pixels.resize(num_pixels, Pixel(0, 0, 0));
+                pixels
+            },
+        }
+    }
 }
 
 fn main() {
-    let mut events_loop = winit::EventsLoop::new();
-    let window = winit::Window::new(&events_loop).unwrap();
-    
-    let h_wnd = window.get_hwnd();
-    let hdc = unsafe { GetDC(h_wnd) };
+    let width: u32 = 1024;
+    let height: u32 = 768;
 
-    let size = window.get_inner_size().unwrap();
+    let logical_size = LogicalSize::new(width as f64, height as f64);
 
-    let backbuffer = Backbuffer {
-        width: size.width as usize, // from f64
-        height: size.height as usize, // from f64
-        hdc: hdc,
-    };
+    let mut events_loop = glium::glutin::EventsLoop::new();
+    let window = glium::glutin::WindowBuilder::new()
+        .with_dimensions(logical_size)
+        .with_title("Pathtracer");
+    let context = glium::glutin::ContextBuilder::new();
+    let display = glium::Display::new(window, context, &events_loop).unwrap();
 
-    events_loop.run_forever(|event| {
-        render(&backbuffer);
+    let backbuffer = Backbuffer::new(width, height);
 
-        match event {
-            winit::Event::WindowEvent {
-              event: winit::WindowEvent::CloseRequested,
-              ..
-            } => winit::ControlFlow::Break,
-            _ => winit::ControlFlow::Continue,
-        }
-    });
-}
+    let mut running = true;
+    while running {
+        let target = display.draw();
 
-fn render(backbuffer: &Backbuffer) {
-    for y in 0..backbuffer.height as i32 {
-        for x in 0..backbuffer.width as i32 {
-            // 0x00bbggrr
-            let color: COLORREF = 0x000000FF;
+        // render();
 
-            unsafe {
-                SetPixel(backbuffer.hdc, x, y, color);
+        unsafe {
+            let raw = &backbuffer.pixels[0].0 as *const u8;
+            glDrawPixels(backbuffer.width,
+                         backbuffer.height,
+                         GL_RGB,
+                         GL_UNSIGNED_BYTE,
+                         raw);
+        };
+
+        target.finish().unwrap();
+
+        events_loop.poll_events(|ev| {
+            match ev {
+                glutin::Event::WindowEvent { event, .. } => match event {
+                    glutin::WindowEvent::CloseRequested => running = false,
+                    _ => (),
+                },
+                _ => (),
             }
-        }
+        });
     }
 }
