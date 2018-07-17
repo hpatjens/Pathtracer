@@ -18,6 +18,20 @@ extern "C" {
 const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
 
+fn clampf32(min: f32, max: f32, x: f32) -> f32 {
+    if x > max {
+        max
+    } else if x < min {
+        min
+    } else {
+        x
+    }
+}
+
+fn saturatef32(x: f32) -> f32 {
+    clampf32(0.0, 1.0, x)
+}
+
 #[derive(Clone)]
 struct Pixel(u8, u8, u8);
 
@@ -77,7 +91,7 @@ fn main() {
             let origin = Vec3::new(-2.0, -2.0, -5.0);
             let u = Vec3::new(4.0 / width as f32, 0.0, 0.0);
             let v = Vec3::new(0.0, 4.0 / height as f32, 0.0);
-            Plane::new(origin, u, v)
+            Plane::new(origin, u, v, Material::None)
         };
         let eye = Vec3::new(0.0, 0.0, -20.0);
         Camera::new(projection_plane, eye)
@@ -90,13 +104,18 @@ fn main() {
         let target = display.draw();
 
         let scene = {
-            let x = frame_index as f32 / 100.0;
+            let x = frame_index as f32 / 40.0;
             let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
             let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
-            Scene::new(vec![
-                Sphere::new(position1, 1.0, Material::Color(Vec3::new(1.0, 0.0, 0.0))),
-                Sphere::new(position2, 1.0, Material::Color(Vec3::new(0.0, 1.0, 0.0))),
-            ])
+            Scene::new(
+                vec![
+                    Sphere::new(position1, 1.0, Material::Mirror),
+                    Sphere::new(position2, 1.0, Material::Color(Vec3::new(0.0, 1.0, 0.0))),
+                ],
+                vec![
+                    Plane::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), Material::Color(Vec3::new(0.2, 0.3, 0.4)))
+                ]
+            )
         };
         render(&mut backbuffer, &camera, &scene);
 
@@ -133,7 +152,9 @@ struct Ray {
 
 #[derive(Clone, Debug)]
 enum Material {
+    None,
     Color(Vec3),
+    Mirror,
 }
 
 #[derive(Clone, Debug, new)]
@@ -141,6 +162,7 @@ struct Plane {
     origin: Vec3,
     u: Vec3,
     v: Vec3,
+    material: Material,
 }
 
 #[derive(Clone, Debug, new)]
@@ -159,6 +181,7 @@ struct Camera {
 #[derive(Debug, new)]
 struct Scene {
     spheres: Vec<Sphere>,
+    planes: Vec<Plane>,
 }
 
 #[derive(Debug, Clone, new)]
@@ -169,7 +192,7 @@ struct Hit<'a> {
     material: &'a Material,
 }
 
-fn intersect<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
+fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
     let to_center = sphere.origin - ray.origin;
     let projection = ray.direction.dot(to_center);
     if projection < 0.0 {
@@ -194,11 +217,59 @@ fn intersect<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
     Some(Hit::new(parameter, position, normal, material))
 }
 
-fn trace_radiance(ray: &Ray, scene: &Scene) -> Vec3 {
+fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
+    let n = plane.u.cross(plane.v).normalize();
+    let s = plane.origin;
+    
+    let p = ray.origin;
+    let d = ray.direction;
+
+    let num = n.x*(s.x - p.x) + n.y*(s.y - p.y) + n.z*(s.z - p.z);
+    let denum = n.x*d.x + n.y*d.y + n.z*d.z;
+
+    if f32::abs(denum) < 0.0000001 { // @TODO: Set a reasonable epsilon
+        return None;
+    }
+
+    let parameter = num / denum;
+    if parameter < 0.0 {
+        return None;
+    }
+
+    let position = p + parameter*d;
+    let normal = n;
+    let material = &plane.material;
+
+    Some(Hit::new(parameter, position, normal, material))
+}
+
+fn reflect(incoming: Vec3, n: Vec3) -> Vec3 {
+    incoming - 2.0*incoming.dot(n)*n
+}
+
+fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
+    if depth <= 0 {
+        return Vec3::zero();
+    }
+
     let mut nearest_hit: Option<Hit> = None;
 
     for sphere in &scene.spheres {
-        if let Some(hit) = intersect(sphere, &ray) {
+        if let Some(hit) = intersect_sphere(sphere, &ray) {
+            nearest_hit = if let Some(nearest_hit) = nearest_hit {
+                if hit.parameter < nearest_hit.parameter {
+                    Some(hit)
+                } else {
+                    Some(nearest_hit)
+                }
+            } else {
+                Some(hit)
+            }
+        }
+    }
+
+    for plane in &scene.planes {
+        if let Some(hit) = intersect_plane(plane, &ray) {
             nearest_hit = if let Some(nearest_hit) = nearest_hit {
                 if hit.parameter < nearest_hit.parameter {
                     Some(hit)
@@ -212,12 +283,35 @@ fn trace_radiance(ray: &Ray, scene: &Scene) -> Vec3 {
     }
 
     if let Some(nearest_hit) = nearest_hit {
+        let reflection = {
+            let reflection_direction = reflect(ray.direction, nearest_hit.normal);
+            let outwards_shifted_position = nearest_hit.position + 0.0001*nearest_hit.normal; // @TODO: Find a good factor
+            trace_radiance(&Ray::new(outwards_shifted_position, reflection_direction), scene, depth - 1)
+        };
+
+        let cos_theta = ray.direction.dot(nearest_hit.normal);
+
         match nearest_hit.material {
+            Material::None => Vec3::one(),
             Material::Color(ref color) => color.clone(),
+            Material::Mirror => reflection,
         }
     } else {
-        Vec3::zero()
+        Vec3::new(0.8, 0.8, 0.9)
     }
+}
+
+#[allow(dead_code)]
+fn tone_map_reinhard(radiance: Vec3) -> Vec3 {
+    radiance / (Vec3::one() + radiance)
+}
+
+fn tone_map_clamp(radiance: Vec3) -> Vec3 {
+    Vec3::new(
+        saturatef32(radiance.x),
+        saturatef32(radiance.y),
+        saturatef32(radiance.z),
+    )
 }
 
 fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
@@ -233,8 +327,9 @@ fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
                 Ray::new(origin, direction)
             };
 
-            let radiance = trace_radiance(&ray, scene);
-            let color = Pixel::from_unit(radiance);
+            let hdr_radiance = trace_radiance(&ray, scene, 2);
+            let ldr_radiance = tone_map_clamp(hdr_radiance);
+            let color = Pixel::from_unit(ldr_radiance);
             backbuffer.set(x, y, color);
         }
     }
