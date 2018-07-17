@@ -3,11 +3,14 @@
 extern crate glium;
 extern crate glutin;
 extern crate hmath;
+extern crate rand;
 
 use glium::glutin::dpi::LogicalSize;
 
 use hmath::*;
+use rand::prelude::*;
 
+type Vec2 = Vector2<f32>;
 type Vec3 = Vector3<f32>;
 
 #[link(name = "opengl32")]
@@ -17,6 +20,8 @@ extern "C" {
 
 const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
+
+const PI: f32 = std::f32::consts::PI;
 
 fn clampf32(min: f32, max: f32, x: f32) -> f32 {
     if x > max {
@@ -72,8 +77,8 @@ impl Backbuffer {
 }
 
 fn main() {
-    let width: u32 = 256;
-    let height: u32 = 256;
+    let width: u32 = 512;
+    let height: u32 = 512;
 
     let logical_size = LogicalSize::new(width as f64, height as f64);
 
@@ -104,16 +109,24 @@ fn main() {
         let target = display.draw();
 
         let scene = {
+            let material = Material::Phyiscally{
+                reflectivity: Vec3::new(0.7, 0.4, 0.6),
+                roughness: 1.0,
+                metalness: 0.0,
+            };
+
             let x = frame_index as f32 / 40.0;
             let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
             let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
+            let light_position = Vec3::new(0.0, 3.5, -1.0);
             Scene::new(
                 vec![
-                    Sphere::new(position1, 1.0, Material::Mirror),
+                    Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
+                    Sphere::new(position1, 1.0, material.clone()),
                     Sphere::new(position2, 1.0, Material::Color(Vec3::new(0.0, 1.0, 0.0))),
                 ],
                 vec![
-                    Plane::new(Vec3::new(0.0, -1.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), Material::Color(Vec3::new(0.2, 0.3, 0.4)))
+                    Plane::new(Vec3::new(0.0, -1.5, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material.clone())
                 ]
             )
         };
@@ -154,7 +167,13 @@ struct Ray {
 enum Material {
     None,
     Color(Vec3),
+    Emissive(Vec3),
     Mirror,
+    Phyiscally {
+        reflectivity: Vec3,
+        roughness: f32,
+        metalness: f32,
+    },
 }
 
 #[derive(Clone, Debug, new)]
@@ -247,11 +266,30 @@ fn reflect(incoming: Vec3, n: Vec3) -> Vec3 {
     incoming - 2.0*incoming.dot(n)*n
 }
 
-fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
-    if depth <= 0 {
-        return Vec3::zero();
-    }
+fn construct_coordinate_system(normal: Vec3) -> (Vec3, Vec3, Vec3) {
+    const EPS: f32 = 0.9999;
+    let other = if normal.y > EPS || normal.y < -EPS {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let y = normal;
+    let x = y.cross(other);
+    let z = y.cross(x);
+    (x, y, z)
+}
 
+fn sample_hemisphere_cos(xi: Vec2) -> Vec3 {
+    let r = f32::sqrt(xi.x);
+    let theta = 2.0*PI*xi.y;
+ 
+    let x = r * f32::cos(theta);
+    let z = r * f32::sin(theta);
+ 
+    Vec3::new(x, f32::sqrt(f32::max(0.0, 1.0 - xi.x)), z)
+}
+
+fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {
     let mut nearest_hit: Option<Hit> = None;
 
     for sphere in &scene.spheres {
@@ -282,22 +320,47 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         }
     }
 
+    nearest_hit
+}
+
+fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
+    if depth <= 0 {
+        return Vec3::zero();
+    }
+
+    let nearest_hit = find_scene_hit(ray, scene);
+
     if let Some(nearest_hit) = nearest_hit {
-        let reflection = {
-            let reflection_direction = reflect(ray.direction, nearest_hit.normal);
-            let outwards_shifted_position = nearest_hit.position + 0.0001*nearest_hit.normal; // @TODO: Find a good factor
-            trace_radiance(&Ray::new(outwards_shifted_position, reflection_direction), scene, depth - 1)
-        };
+        let outwards_shifted_position = nearest_hit.position + 0.0001*nearest_hit.normal; // @TODO: Find a good factor
 
         let cos_theta = ray.direction.dot(nearest_hit.normal);
 
         match nearest_hit.material {
             Material::None => Vec3::one(),
             Material::Color(ref color) => color.clone(),
-            Material::Mirror => reflection,
+            Material::Emissive(ref color) => color.clone(),
+            Material::Mirror => {
+                let reflection_direction = reflect(ray.direction, nearest_hit.normal);
+                trace_radiance(&Ray::new(outwards_shifted_position, reflection_direction), scene, depth - 1)
+            },
+            Material::Phyiscally{ ref reflectivity, ref roughness, ref metalness } => {
+                let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
+                let xi = Vec2::new(random::<f32>(), random::<f32>());
+                let h = sample_hemisphere_cos(xi);
+                let direction = h.x*ax + h.y*ay + h.z*az;
+                let ray = Ray::new(outwards_shifted_position, direction);
+
+                let reflection = trace_radiance(&ray, scene, depth - 1);
+
+                reflection
+            },
         }
     } else {
-        Vec3::new(0.8, 0.8, 0.9)
+        // @TODO: Make a nice gradient for the sky of sample an equirectangular projection.
+        let theta = f32::acos(ray.direction.y);
+        let t = f32::powf(theta / PI, 2.0);
+        let intensity = 1.0 - 2.0*t;
+        intensity*Vec3::new(0.2, 0.2, 0.3)
     }
 }
 
