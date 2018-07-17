@@ -21,6 +21,16 @@ const GL_UNSIGNED_BYTE: i32 = 0x1401;
 #[derive(Clone)]
 struct Pixel(u8, u8, u8);
 
+impl Pixel {
+    fn from_unit(color: Vec3) -> Self {
+        Pixel((color.x*255.0) as u8, (color.y*255.0) as u8, (color.z*255.0) as u8)
+    }
+
+    fn from_signed_unit(color: Vec3) -> Self {
+        Self::from_unit(Vec3::new(0.5, 0.5, 0.5) + 0.5*color)
+    }
+}
+
 struct Backbuffer {
     width: u32,
     height: u32,
@@ -48,8 +58,8 @@ impl Backbuffer {
 }
 
 fn main() {
-    let width: u32 = 1024;
-    let height: u32 = 768;
+    let width: u32 = 256;
+    let height: u32 = 256;
 
     let logical_size = LogicalSize::new(width as f64, height as f64);
 
@@ -69,15 +79,21 @@ fn main() {
             let v = Vec3::new(0.0, 4.0 / height as f32, 0.0);
             Plane::new(origin, u, v)
         };
-        let eye = Vec3::new(0.0, 0.0, -10.0);
+        let eye = Vec3::new(0.0, 0.0, -20.0);
         Camera::new(projection_plane, eye)
     };
-    let scene = Scene::new(vec![Sphere::new(Vec3::zero(), 1.0)]);
+
+    let mut frame_index = 0;
 
     let mut running = true;
     while running {
         let target = display.draw();
 
+        let scene = {
+            let x = frame_index as f32 / 100.0;
+            let position = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
+            Scene::new(vec![Sphere::new(position, 1.0)])
+        };
         render(&mut backbuffer, &camera, &scene);
 
         unsafe {
@@ -100,6 +116,8 @@ fn main() {
                 _ => (),
             }
         });
+
+        frame_index += 1;
     }
 }
 
@@ -132,11 +150,35 @@ struct Camera {
 struct Scene {
     spheres: Vec<Sphere>,
 }
-fn intersect(sphere: &Sphere, ray: &Ray) -> bool {
-    let w = sphere.origin - ray.origin;
-    let e = ray.direction.dot(w)*ray.direction;
-    let r = w - e;
-       r.length() < sphere.radius
+
+#[derive(Debug, Clone, new)]
+struct Hit {
+    position: Vec3,
+    normal: Vec3,
+}
+
+fn intersect(sphere: &Sphere, ray: &Ray) -> Option<Hit> {
+    let to_center = sphere.origin - ray.origin;
+    let projection = ray.direction.dot(to_center);
+    if projection < 0.0 {
+        return None;
+    }
+
+    let on_ray_to_center = projection*ray.direction;
+    let to_inner_hit = to_center - on_ray_to_center;
+    let inner_hit_distance = to_inner_hit.length();
+    if inner_hit_distance > sphere.radius {
+        return None;
+    }
+
+    let on_ray_in_sphere = f32::sqrt(sphere.radius*sphere.radius - inner_hit_distance*inner_hit_distance);
+    let t1 = projection - on_ray_in_sphere;
+    let t2 = projection + on_ray_in_sphere;
+    let parameter = if t1 < t2 { t1 } else { t2 };
+
+    let position = ray.origin + parameter*ray.direction;
+    let normal = (position - sphere.origin).normalize();
+    Some(Hit::new(position, normal))
 }
 
 fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
@@ -153,8 +195,9 @@ fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
             };
 
             for sphere in &scene.spheres {
-                if intersect(sphere, &ray) {
-                    backbuffer.set(x, y, Pixel(255, 65, 21));
+                if let Some(hit) = intersect(sphere, &ray) {
+                    let color = Pixel::from_signed_unit(hit.normal);
+                    backbuffer.set(x, y, color);
                 } else {
                     backbuffer.set(x, y, Pixel(34, 34, 34));
                 }
