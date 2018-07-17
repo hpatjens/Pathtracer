@@ -44,10 +44,6 @@ impl Pixel {
     fn from_unit(color: Vec3) -> Self {
         Pixel((color.x*255.0) as u8, (color.y*255.0) as u8, (color.z*255.0) as u8)
     }
-
-    fn from_signed_unit(color: Vec3) -> Self {
-        Self::from_unit(Vec3::new(0.5, 0.5, 0.5) + 0.5*color)
-    }
 }
 
 struct Backbuffer {
@@ -109,8 +105,13 @@ fn main() {
         let target = display.draw();
 
         let scene = {
-            let material = Material::Phyiscally{
-                reflectivity: Vec3::new(0.7, 0.4, 0.6),
+            let material1 = Material::Phyiscally{
+                reflectivity: Vec3::new(0.7, 0.73, 0.72),
+                roughness: 1.0,
+                metalness: 0.0,
+            };
+            let material2 = Material::Phyiscally{
+                reflectivity: Vec3::new(0.5, 0.5, 0.5),
                 roughness: 1.0,
                 metalness: 0.0,
             };
@@ -122,11 +123,11 @@ fn main() {
             Scene::new(
                 vec![
                     Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
-                    Sphere::new(position1, 1.0, material.clone()),
-                    Sphere::new(position2, 1.0, Material::Color(Vec3::new(0.0, 1.0, 0.0))),
+                    Sphere::new(position1, 1.0, material1.clone()),
+                    Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
                 ],
                 vec![
-                    Plane::new(Vec3::new(0.0, -1.5, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material.clone())
+                    Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
                 ]
             )
         };
@@ -164,9 +165,9 @@ struct Ray {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 enum Material {
     None,
-    Color(Vec3),
     Emissive(Vec3),
     Mirror,
     Phyiscally {
@@ -323,6 +324,10 @@ fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {
     nearest_hit
 }
 
+fn brdf_lambert(reflectivity: Vec3, radiance: Vec3) -> Vec3 {
+    reflectivity*radiance
+}
+
 fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     if depth <= 0 {
         return Vec3::zero();
@@ -333,17 +338,14 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     if let Some(nearest_hit) = nearest_hit {
         let outwards_shifted_position = nearest_hit.position + 0.0001*nearest_hit.normal; // @TODO: Find a good factor
 
-        let cos_theta = ray.direction.dot(nearest_hit.normal);
-
         match nearest_hit.material {
             Material::None => Vec3::one(),
-            Material::Color(ref color) => color.clone(),
             Material::Emissive(ref color) => color.clone(),
             Material::Mirror => {
                 let reflection_direction = reflect(ray.direction, nearest_hit.normal);
                 trace_radiance(&Ray::new(outwards_shifted_position, reflection_direction), scene, depth - 1)
             },
-            Material::Phyiscally{ ref reflectivity, ref roughness, ref metalness } => {
+            Material::Phyiscally{ ref reflectivity, .. } => {
                 let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random::<f32>(), random::<f32>());
                 let h = sample_hemisphere_cos(xi);
@@ -352,7 +354,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
 
                 let reflection = trace_radiance(&ray, scene, depth - 1);
 
-                reflection
+                brdf_lambert(*reflectivity, reflection)
             },
         }
     } else {
@@ -360,7 +362,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         let theta = f32::acos(ray.direction.y);
         let t = f32::powf(theta / PI, 2.0);
         let intensity = 1.0 - 2.0*t;
-        intensity*Vec3::new(0.2, 0.2, 0.3)
+        intensity*Vec3::new(0.6, 0.6, 0.8)
     }
 }
 
@@ -390,7 +392,7 @@ fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
                 Ray::new(origin, direction)
             };
 
-            let hdr_radiance = trace_radiance(&ray, scene, 2);
+            let hdr_radiance = trace_radiance(&ray, scene, 3);
             let ldr_radiance = tone_map_clamp(hdr_radiance);
             let color = Pixel::from_unit(ldr_radiance);
             backbuffer.set(x, y, color);
