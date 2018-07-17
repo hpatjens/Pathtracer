@@ -1,7 +1,14 @@
+#[macro_use] extern crate derive_new;
+
 extern crate glium;
 extern crate glutin;
+extern crate hmath;
 
 use glium::glutin::dpi::LogicalSize;
+
+use hmath::*;
+
+type Vec3 = Vector3<f32>;
 
 #[link(name = "opengl32")]
 extern "C" {
@@ -33,6 +40,11 @@ impl Backbuffer {
             },
         }
     }
+
+    fn set(&mut self, x: u32, y: u32, pixel: Pixel) {
+        let index = (y*self.width + x) as usize;
+        self.pixels[index] = pixel;
+    }
 }
 
 fn main() {
@@ -48,13 +60,25 @@ fn main() {
     let context = glium::glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events_loop).unwrap();
 
-    let backbuffer = Backbuffer::new(width, height);
+    let mut backbuffer = Backbuffer::new(width, height);
+
+    let camera = {
+        let projection_plane = {
+            let origin = Vec3::new(-2.0, -2.0, -5.0);
+            let u = Vec3::new(4.0 / width as f32, 0.0, 0.0);
+            let v = Vec3::new(0.0, 4.0 / height as f32, 0.0);
+            Plane::new(origin, u, v)
+        };
+        let eye = Vec3::new(0.0, 0.0, -10.0);
+        Camera::new(projection_plane, eye)
+    };
+    let scene = Scene::new(vec![Sphere::new(Vec3::zero(), 1.0)]);
 
     let mut running = true;
     while running {
         let target = display.draw();
 
-        // render();
+        render(&mut backbuffer, &camera, &scene);
 
         unsafe {
             let raw = &backbuffer.pixels[0].0 as *const u8;
@@ -76,5 +100,65 @@ fn main() {
                 _ => (),
             }
         });
+    }
+}
+
+#[derive(Clone, Debug, new)]
+struct Ray {
+    origin: Vec3,
+    direction: Vec3,
+}
+
+#[derive(Clone, Debug, new)]
+struct Plane {
+    origin: Vec3,
+    u: Vec3,
+    v: Vec3,
+}
+
+#[derive(Clone, Debug, new)]
+struct Sphere {
+    origin: Vec3,
+    radius: f32,
+}
+
+#[derive(Debug, new)]
+struct Camera {
+    projection_plane: Plane,
+    eye: Vec3,
+}
+
+#[derive(Debug, new)]
+struct Scene {
+    spheres: Vec<Sphere>,
+}
+fn intersect(sphere: &Sphere, ray: &Ray) -> bool {
+    let w = sphere.origin - ray.origin;
+    let e = ray.direction.dot(w)*ray.direction;
+    let r = w - e;
+       r.length() < sphere.radius
+}
+
+fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
+    for y in 0..backbuffer.height {
+        for x in 0..backbuffer.width {
+            let ray = {
+                let origin = {
+                    let du = x as f32*camera.projection_plane.u;
+                    let dv = y as f32*camera.projection_plane.v;
+                    camera.projection_plane.origin + du + dv
+                };
+                let direction = (origin - camera.eye).normalize();
+                Ray::new(origin, direction)
+            };
+
+            for sphere in &scene.spheres {
+                if intersect(sphere, &ray) {
+                    backbuffer.set(x, y, Pixel(255, 65, 21));
+                } else {
+                    backbuffer.set(x, y, Pixel(34, 34, 34));
+                }
+            }
+        }
     }
 }

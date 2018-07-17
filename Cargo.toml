@@ -4,5 +4,7 @@ version = "0.1.0"
 authors = ["Henrik Patjens <hpatjens@gmail.com>"]
 
 [dependencies]
+derive-new = "0.5.5"
 glium = "0.22.0"
 glutin = "0.17.0"
+hmath = { git = "https://github.com/hpatjens/hmath" }
