@@ -91,8 +91,12 @@ fn main() {
 
         let scene = {
             let x = frame_index as f32 / 100.0;
-            let position = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
-            Scene::new(vec![Sphere::new(position, 1.0)])
+            let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
+            let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
+            Scene::new(vec![
+                Sphere::new(position1, 1.0, Material::Color(Vec3::new(1.0, 0.0, 0.0))),
+                Sphere::new(position2, 1.0, Material::Color(Vec3::new(0.0, 1.0, 0.0))),
+            ])
         };
         render(&mut backbuffer, &camera, &scene);
 
@@ -127,6 +131,11 @@ struct Ray {
     direction: Vec3,
 }
 
+#[derive(Clone, Debug)]
+enum Material {
+    Color(Vec3),
+}
+
 #[derive(Clone, Debug, new)]
 struct Plane {
     origin: Vec3,
@@ -138,6 +147,7 @@ struct Plane {
 struct Sphere {
     origin: Vec3,
     radius: f32,
+    material: Material,
 }
 
 #[derive(Debug, new)]
@@ -152,12 +162,14 @@ struct Scene {
 }
 
 #[derive(Debug, Clone, new)]
-struct Hit {
+struct Hit<'a> {
+    parameter: f32,
     position: Vec3,
     normal: Vec3,
+    material: &'a Material,
 }
 
-fn intersect(sphere: &Sphere, ray: &Ray) -> Option<Hit> {
+fn intersect<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
     let to_center = sphere.origin - ray.origin;
     let projection = ray.direction.dot(to_center);
     if projection < 0.0 {
@@ -174,11 +186,38 @@ fn intersect(sphere: &Sphere, ray: &Ray) -> Option<Hit> {
     let on_ray_in_sphere = f32::sqrt(sphere.radius*sphere.radius - inner_hit_distance*inner_hit_distance);
     let t1 = projection - on_ray_in_sphere;
     let t2 = projection + on_ray_in_sphere;
-    let parameter = if t1 < t2 { t1 } else { t2 };
 
+    let parameter = if t1 < t2 { t1 } else { t2 };
     let position = ray.origin + parameter*ray.direction;
     let normal = (position - sphere.origin).normalize();
-    Some(Hit::new(position, normal))
+    let material = &sphere.material;
+    Some(Hit::new(parameter, position, normal, material))
+}
+
+fn trace_radiance(ray: &Ray, scene: &Scene) -> Vec3 {
+    let mut nearest_hit: Option<Hit> = None;
+
+    for sphere in &scene.spheres {
+        if let Some(hit) = intersect(sphere, &ray) {
+            nearest_hit = if let Some(nearest_hit) = nearest_hit {
+                if hit.parameter < nearest_hit.parameter {
+                    Some(hit)
+                } else {
+                    Some(nearest_hit)
+                }
+            } else {
+                Some(hit)
+            }
+        }
+    }
+
+    if let Some(nearest_hit) = nearest_hit {
+        match nearest_hit.material {
+            Material::Color(ref color) => color.clone(),
+        }
+    } else {
+        Vec3::zero()
+    }
 }
 
 fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
@@ -194,14 +233,9 @@ fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
                 Ray::new(origin, direction)
             };
 
-            for sphere in &scene.spheres {
-                if let Some(hit) = intersect(sphere, &ray) {
-                    let color = Pixel::from_signed_unit(hit.normal);
-                    backbuffer.set(x, y, color);
-                } else {
-                    backbuffer.set(x, y, Pixel(34, 34, 34));
-                }
-            }
+            let radiance = trace_radiance(&ray, scene);
+            let color = Pixel::from_unit(radiance);
+            backbuffer.set(x, y, color);
         }
     }
 }
