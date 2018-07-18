@@ -9,8 +9,15 @@ use glium::glutin::dpi::LogicalSize;
 
 use hmath::*;
 
+use std::collections::VecDeque;
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 type Vec2 = Vector2<f32>;
 type Vec3 = Vector3<f32>;
+
+type Vec2u = Vector2<u32>;
 
 #[link(name = "opengl32")]
 extern "C" {
@@ -61,6 +68,12 @@ impl Pixel {
     }
 }
 
+#[derive(Clone, Debug, new)]
+struct WorkTile {
+    position: Vec2u,
+    size: Vec2u,
+}
+
 struct Backbuffer {
     width: u32,
     height: u32,
@@ -107,6 +120,19 @@ fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_ne
     Camera::new(projection_plane, position)
 }
 
+fn trace_tiles(work_queue: Arc<Mutex<RefCell<VecDeque<WorkTile>>>>, backbuffer: Arc<Mutex<RefCell<Backbuffer>>>, camera: Arc<Camera>, scene: Arc<Scene>) {
+    loop {
+        // @TODO: This is non-blocking
+        let work_queue = work_queue.lock().unwrap();
+        let mut work_queue = work_queue.borrow_mut();
+        if let Some(work_tile) = work_queue.pop_front() {
+            let backbuffer = backbuffer.lock().unwrap();
+            let mut backbuffer = backbuffer.borrow_mut();
+            render(work_tile, &mut backbuffer, &camera, &scene);
+        }
+    }
+}
+
 fn main() {
     let width: u32 = 512;
     let height: u32 = 512;
@@ -120,52 +146,76 @@ fn main() {
     let context = glium::glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events_loop).unwrap();
 
-    let mut backbuffer = Backbuffer::new(width, height);
-
     let mut frame_index = 0;
+
+    let scene = {
+        let material1 = Material::Phyiscally{
+            reflectivity: Vec3::new(0.7, 0.73, 0.72),
+            roughness: 1.0,
+            metalness: 0.0,
+        };
+        let material2 = Material::Phyiscally{
+            reflectivity: Vec3::new(0.5, 0.5, 0.5),
+            roughness: 1.0,
+            metalness: 0.0,
+        };
+
+        let x = frame_index as f32 / 40.0;
+        let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
+        let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
+        let light_position = Vec3::new(0.0, 3.5, -1.0);
+        Arc::new(Scene::new(
+            vec![
+                Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
+                Sphere::new(position1, 1.0, material1.clone()),
+                Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
+            ],
+            vec![
+                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
+            ]
+        ))
+    };
+
+    let camera = {
+        let x = frame_index as f32 / 40.0;
+        const D: f32 = 20.0;
+        let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
+        Arc::new(look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0))
+    };
+
+    let backbuffer = Arc::new(Mutex::new(RefCell::new(Backbuffer::new(width, height))));
+    let work_queue = Arc::new(Mutex::new(RefCell::new(VecDeque::new())));
+
+    const NUMBER_OF_THREADS: usize = 4;
+    for _ in 0..NUMBER_OF_THREADS {
+        let backbuffer = backbuffer.clone();
+        let work_queue = work_queue.clone();
+        let camera = camera.clone();
+        let scene = scene.clone();
+        thread::spawn(move || {
+            trace_tiles(work_queue, backbuffer, camera, scene);
+        });
+    }
 
     let mut running = true;
     while running {
         let target = display.draw();
 
-        let scene = {
-            let material1 = Material::Phyiscally{
-                reflectivity: Vec3::new(0.7, 0.73, 0.72),
-                roughness: 1.0,
-                metalness: 0.0,
-            };
-            let material2 = Material::Phyiscally{
-                reflectivity: Vec3::new(0.5, 0.5, 0.5),
-                roughness: 1.0,
-                metalness: 0.0,
-            };
-
-            let x = frame_index as f32 / 40.0;
-            let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
-            let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
-            let light_position = Vec3::new(0.0, 3.5, -1.0);
-            Scene::new(
-                vec![
-                    Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
-                    Sphere::new(position1, 1.0, material1.clone()),
-                    Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
-                ],
-                vec![
-                    Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
-                ]
-            )
+        let work_tile = {
+            let backbuffer = backbuffer.lock().unwrap();
+            let backbuffer = backbuffer.borrow();
+            WorkTile::new(Vec2u::zero(), Vec2u::new(backbuffer.width, backbuffer.height))
         };
-
-        let camera = {
-            let x = frame_index as f32 / 40.0;
-            const D: f32 = 20.0;
-            let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
-            look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)
-        };
-
-        render(&mut backbuffer, &camera, &scene);
+        
+        {
+            let work_queue = work_queue.lock().unwrap();
+            work_queue.borrow_mut().push_back(work_tile);
+        }
+        
 
         unsafe {
+            let backbuffer = backbuffer.lock().unwrap();
+            let backbuffer = backbuffer.borrow();
             let raw = &backbuffer.pixels[0].0 as *const u8;
             glDrawPixels(backbuffer.width,
                          backbuffer.height,
@@ -413,12 +463,15 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
+fn render(work_tile: WorkTile, backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
-    for y in 0..backbuffer.height {
-        for x in 0..backbuffer.width {
+    let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
+    let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);
+
+    for y in y0..y1 {
+        for x in x0..x1 {
             let ray = {
                 let origin = {
                     let du = x as f32*camera_u;
