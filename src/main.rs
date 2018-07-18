@@ -8,7 +8,6 @@ extern crate rand;
 use glium::glutin::dpi::LogicalSize;
 
 use hmath::*;
-use rand::prelude::*;
 
 type Vec2 = Vector2<f32>;
 type Vec3 = Vector3<f32>;
@@ -22,6 +21,22 @@ const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
 
 const PI: f32 = std::f32::consts::PI;
+
+static mut X32: u32 = 314159265;
+
+fn xorshift32() -> u32 {
+    unsafe { 
+        X32 ^= X32 << 13;
+        X32 ^= X32 >> 17;
+        X32 ^= X32 << 5;
+        X32
+    }
+}
+
+fn random32() -> f32 {
+    let r = xorshift32();
+    r as f32 / std::u32::MAX as f32
+}
 
 fn clampf32(min: f32, max: f32, x: f32) -> f32 {
     if x > max {
@@ -72,6 +87,26 @@ impl Backbuffer {
     }
 }
 
+fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Camera {
+    let projection_plane = {
+        let z = (position - target).normalize();
+        let x = up.cross(z).normalize();
+        let y = z.cross(x).normalize();
+
+        let half_width = width / 2.0;
+        let half_height = height / 2.0;
+
+        let to_plane_center = -z_near*z;
+
+        let origin = position + to_plane_center - x*half_width - y*half_height;
+
+        let u = x*width;
+        let v = y*height;
+        Plane::new(origin, u, v, Material::None)
+    };
+    Camera::new(projection_plane, position)
+}
+
 fn main() {
     let width: u32 = 512;
     let height: u32 = 512;
@@ -86,17 +121,6 @@ fn main() {
     let display = glium::Display::new(window, context, &events_loop).unwrap();
 
     let mut backbuffer = Backbuffer::new(width, height);
-
-    let camera = {
-        let projection_plane = {
-            let origin = Vec3::new(-2.0, -2.0, -5.0);
-            let u = Vec3::new(4.0 / width as f32, 0.0, 0.0);
-            let v = Vec3::new(0.0, 4.0 / height as f32, 0.0);
-            Plane::new(origin, u, v, Material::None)
-        };
-        let eye = Vec3::new(0.0, 0.0, -20.0);
-        Camera::new(projection_plane, eye)
-    };
 
     let mut frame_index = 0;
 
@@ -131,6 +155,14 @@ fn main() {
                 ]
             )
         };
+
+        let camera = {
+            let x = frame_index as f32 / 40.0;
+            const D: f32 = 20.0;
+            let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
+            look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)
+        };
+
         render(&mut backbuffer, &camera, &scene);
 
         unsafe {
@@ -347,14 +379,16 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
             },
             Material::Phyiscally{ ref reflectivity, .. } => {
                 let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
-                let xi = Vec2::new(random::<f32>(), random::<f32>());
+                let xi = Vec2::new(random32(), random32());
                 let h = sample_hemisphere_cos(xi);
                 let direction = h.x*ax + h.y*ay + h.z*az;
                 let ray = Ray::new(outwards_shifted_position, direction);
 
+                let cos_theta_reflection = direction.dot(nearest_hit.normal);
+
                 let reflection = trace_radiance(&ray, scene, depth - 1);
 
-                brdf_lambert(*reflectivity, reflection)
+                brdf_lambert(*reflectivity, reflection)*cos_theta_reflection*PI
             },
         }
     } else {
@@ -380,19 +414,29 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
 }
 
 fn render(backbuffer: &mut Backbuffer, camera: &Camera, scene: &Scene) {
+    let camera_u = camera.projection_plane.u / backbuffer.width as f32;
+    let camera_v = camera.projection_plane.v / backbuffer.height as f32;
+
     for y in 0..backbuffer.height {
         for x in 0..backbuffer.width {
             let ray = {
                 let origin = {
-                    let du = x as f32*camera.projection_plane.u;
-                    let dv = y as f32*camera.projection_plane.v;
+                    let du = x as f32*camera_u;
+                    let dv = y as f32*camera_v;
                     camera.projection_plane.origin + du + dv
                 };
                 let direction = (origin - camera.eye).normalize();
                 Ray::new(origin, direction)
             };
 
-            let hdr_radiance = trace_radiance(&ray, scene, 3);
+            let hdr_radiance = {
+                const N: usize = 1;
+                let mut hdr_radiance = Vec3::zero();
+                for _ in 0..N {
+                    hdr_radiance += trace_radiance(&ray, scene, 2);
+                }
+                hdr_radiance / N as f32
+            };
             let ldr_radiance = tone_map_clamp(hdr_radiance);
             let color = Pixel::from_unit(ldr_radiance);
             backbuffer.set(x, y, color);
