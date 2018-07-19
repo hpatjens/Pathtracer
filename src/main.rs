@@ -4,16 +4,17 @@ extern crate glium;
 extern crate glutin;
 extern crate hmath;
 extern crate rand;
+extern crate time;
+
+mod worker;
+use worker::*;
 
 use glium::glutin::dpi::LogicalSize;
 
 use hmath::*;
 
-use std::collections::VecDeque;
-use std::cell::{RefCell, UnsafeCell};
-use std::sync::{Arc, Mutex, Condvar};
-use std::thread;
-use std::thread::JoinHandle;
+use std::cell::UnsafeCell;
+use std::sync::Arc;
 
 type Vec2 = Vector2<f32>;
 type Vec3 = Vector3<f32>;
@@ -74,96 +75,6 @@ struct WorkTile {
     tile_index: Vec2u,
     position: Vec2u,
     size: Vec2u,
-}
-
-#[derive(Debug)]
-struct Worker {
-    index: usize,
-    thread: JoinHandle<()>,
-}
-
-impl Worker {
-    pub fn new(index: usize, thread: JoinHandle<()>) -> Self {
-        Worker {
-            index: index,
-            thread: thread,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct WorkerPool<D: Send + 'static, J: FnMut(D) + Sync + Send + 'static> {
-    workers: Vec<Worker>,
-    work_queue: Arc<(Mutex<RefCell<VecDeque<D>>>, Condvar)>,
-    processor: Arc<Mutex<RefCell<J>>>,
-}
-
-impl<D: Send, J: FnMut(D) + Sync + Send> WorkerPool<D, J> {
-    pub fn new(num_workers: usize, processor: J) -> Self {
-        let work_queue = Arc::new((Mutex::new(RefCell::new(VecDeque::new())), Condvar::new()));
-        let processor = Arc::new(Mutex::new(RefCell::new(processor)));
-
-        let workers = (0..num_workers).map(|i| {
-            let work_queue2 = work_queue.clone();
-            let processor2 = processor.clone();
-
-            let thread = thread::spawn(move || {
-                loop {
-                    let (ref queue, ref condvar) = *work_queue2;
-                    let mut queue = match queue.lock() {
-                        Ok(queue) => queue,
-                        Err(_poisened_guard) => {
-                            // When another thread panics while having locked the mutex. It is
-                            // considered poisened and cannot be aquired. However, Err returns the
-                            // poisened guard which could be used anyway which is not a good idea in this case as the state of the queue is unknown.
-                            panic!(Self::panic_mutex_lock_message("work_queue"));
-                        },
-                    };
-                    while queue.borrow().len() <= 0 {
-                        queue = condvar.wait(queue).unwrap();
-                    }
-                    let mut queue = queue.borrow_mut();
-                    
-                    if let Some(work) = queue.pop_front() {
-                        let processor = match processor2.lock() {
-                            Ok(processor) => processor,
-                            Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("processor")),
-                        };
-                        let mut processor = processor.borrow_mut();
-                        (&mut *processor)(work);
-                    }
-                }
-            });
-
-            Worker::new(i, thread)
-        }).collect();
-
-        WorkerPool {
-            workers: workers,
-            work_queue: work_queue,
-            processor: processor,
-        }
-    }
-
-    pub fn process(&self, job_data: D) {
-        let (ref queue, ref condvar) = *self.work_queue;
-        let queue = match queue.lock() {
-            Ok(queue) => queue,
-            Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("work_queue")),
-        };
-        let mut queue = queue.borrow_mut();
-        queue.push_back(job_data);
-
-        condvar.notify_one();
-    }
-
-    pub fn wait(&self) {
-        // @TODO: Implement this
-    }
-
-    fn panic_mutex_lock_message(mutex_string: &str) -> String {
-        format!("Could not aquire the mutex for the {} within the WorkerPool as the mutex is poisened. This indicates that some erroneous condition on another thread was not handled correctly.", mutex_string)
-    }
 }
 
 struct Backbuffer {
@@ -227,37 +138,33 @@ fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_ne
     Camera::new(projection_plane, position)
 }
 
-fn update(scene: Arc<Mutex<RefCell<Scene>>>, frame_index: usize) {
-    // @TODO: Eliminate the mutex by disallowing the worker threads to run while the scene is changed within the update function.
-    let scene = scene.lock().unwrap();
-    let mut scene = scene.borrow_mut();
-    *scene = {
-        let material1 = Material::Phyiscally{
-            reflectivity: Vec3::new(0.7, 0.73, 0.72),
-            roughness: 1.0,
-            metalness: 0.0,
-        };
-        let material2 = Material::Phyiscally{
-            reflectivity: Vec3::new(0.5, 0.5, 0.5),
-            roughness: 1.0,
-            metalness: 0.0,
-        };
-
-        let x = frame_index as f32 / 40.0;
-        let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
-        let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
-        let light_position = Vec3::new(0.0, 3.5, -1.0);
-        Scene::new(
-            vec![
-                Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
-                Sphere::new(position1, 1.0, material1.clone()),
-                Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
-            ],
-            vec![
-                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
-            ]
-        )
+fn update(scene: &mut Scene, frame_index: usize) {
+    let material1 = Material::Phyiscally{
+        reflectivity: Vec3::new(0.7, 0.73, 0.72),
+        roughness: 1.0,
+        metalness: 0.0,
     };
+    let material2 = Material::Phyiscally{
+        reflectivity: Vec3::new(0.5, 0.5, 0.5),
+        roughness: 1.0,
+        metalness: 0.0,
+    };
+
+    let x = frame_index as f32 / 40.0;
+    let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
+    let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
+    let light_position = Vec3::new(0.0, 3.5, -1.0);
+
+    *scene = Scene::new(
+        vec![
+            Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
+            Sphere::new(position1, 1.0, material1.clone()),
+            Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
+        ],
+        vec![
+            Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
+        ]
+    )
 }
 
 fn main() {
@@ -275,8 +182,6 @@ fn main() {
 
     let mut frame_index = 0;
 
-    let scene = Arc::new(Mutex::new(RefCell::new(Scene::new(Vec::new(), Vec::new()))));
-
     let camera = {
         let x = frame_index as f32 / 40.0;
         const D: f32 = 20.0;
@@ -286,34 +191,51 @@ fn main() {
 
     let backbuffer = Arc::new(Backbuffer::new(width, height));
 
-    const NUM_WORKER_THREADS: usize = 4;
-    let worker_pool = {
-        let backbuffer2 = backbuffer.clone();
-        let camera = camera.clone();
-        let scene = scene.clone();
-        WorkerPool::new(NUM_WORKER_THREADS, move |work_tile|{
-            render(work_tile, &backbuffer2, &camera, scene.clone());
-        })
-    };
+    const NUM_WORKER_THREADS: usize = 1;
+    let worker_pool = WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |_work| {}));
+
+    let mut scene = Scene::new(Vec::new(), Vec::new());
 
     let mut running = true;
     while running {
-        update(scene.clone(), frame_index);
+        let frame_time_start = time::precise_time_ns();
 
-        for _ in 0..1 {
-            const TILE_SIZE: u32 = 64;
-            let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
-            let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
-            let num_tiles_y = (backbuffer.height + TILE_SIZE - 1) / TILE_SIZE;
-            for y in 0..num_tiles_y {
-                for x in 0..num_tiles_x {
-                    let tile_index = Vec2u::new(x, y);
-                    let tile_position = Vec2u::new(x*TILE_SIZE, y*TILE_SIZE);
-                    let work_tile = WorkTile::new(tile_index, tile_position, tile_size);
-                    worker_pool.process(work_tile);
+        update(&mut scene, frame_index);
+
+        scene = {
+            let scene = Arc::new(scene);
+
+            {
+                let backbuffer2 = backbuffer.clone();
+                let camera = camera.clone();
+                let scene2 = scene.clone();
+                worker_pool.set_processor(Box::new(move |work_tile|{
+                    render(work_tile, &backbuffer2, &camera, scene2.clone());
+                }));
+            }
+
+            for _ in 0..1 {
+                const TILE_SIZE: u32 = 32;
+                let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
+                let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
+                let num_tiles_y = (backbuffer.height + TILE_SIZE - 1) / TILE_SIZE;
+                for y in 0..num_tiles_y {
+                    for x in 0..num_tiles_x {
+                        let tile_index = Vec2u::new(x, y);
+                        let tile_position = Vec2u::new(x*TILE_SIZE, y*TILE_SIZE);
+                        let work_tile = WorkTile::new(tile_index, tile_position, tile_size);
+                        worker_pool.process(work_tile);
+                    }
                 }
             }
-        }
+
+            worker_pool.wait();
+            assert!(worker_pool.queue_len() == 0);
+
+            worker_pool.set_processor(Box::new(move |_work| {}));
+
+            Arc::try_unwrap(scene).ok().unwrap()
+        };
 
         let target = display.draw();
 
@@ -339,6 +261,9 @@ fn main() {
         });
 
         frame_index += 1;
+
+        let frame_time_end = time::precise_time_ns();
+        println!("frame_time = {} ms", (frame_time_end - frame_time_start) as f64 / 1_000_000.0);
     }
 }
 
@@ -565,7 +490,7 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<Mutex<RefCell<Scene>>>) {
+fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<Scene>) {
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
@@ -585,10 +510,7 @@ fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, sc
             };
 
             let hdr_radiance = {
-                let scene = scene.lock().unwrap();
-                let scene = scene.borrow();
-
-                const N: usize = 32;
+                const N: usize = 1;
                 let mut hdr_radiance = Vec3::zero();
                 for _ in 0..N {
                     hdr_radiance += trace_radiance(&ray, &*scene, 2);
@@ -598,10 +520,6 @@ fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, sc
             let ldr_radiance = tone_map_clamp(hdr_radiance);
             let color = Pixel::from_unit(ldr_radiance);
             backbuffer.set_pixel_unsafe(x, y, color);
-
-            if y == y1 - 1 || x == x1 - 1 {
-                backbuffer.set_pixel_unsafe(x, y, Pixel(255, 0, 0));
-            }
         }
     }
 }
