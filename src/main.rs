@@ -227,22 +227,11 @@ fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_ne
     Camera::new(projection_plane, position)
 }
 
-fn main() {
-    let width: u32 = 512;
-    let height: u32 = 512;
-
-    let logical_size = LogicalSize::new(width as f64, height as f64);
-
-    let mut events_loop = glium::glutin::EventsLoop::new();
-    let window = glium::glutin::WindowBuilder::new()
-        .with_dimensions(logical_size)
-        .with_title("Pathtracer");
-    let context = glium::glutin::ContextBuilder::new();
-    let display = glium::Display::new(window, context, &events_loop).unwrap();
-
-    let mut frame_index = 0;
-
-    let scene = {
+fn update(scene: Arc<Mutex<RefCell<Scene>>>, frame_index: usize) {
+    // @TODO: Eliminate the mutex by disallowing the worker threads to run while the scene is changed within the update function.
+    let scene = scene.lock().unwrap();
+    let mut scene = scene.borrow_mut();
+    *scene = {
         let material1 = Material::Phyiscally{
             reflectivity: Vec3::new(0.7, 0.73, 0.72),
             roughness: 1.0,
@@ -258,7 +247,7 @@ fn main() {
         let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
         let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
         let light_position = Vec3::new(0.0, 3.5, -1.0);
-        Arc::new(Scene::new(
+        Scene::new(
             vec![
                 Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
                 Sphere::new(position1, 1.0, material1.clone()),
@@ -267,8 +256,26 @@ fn main() {
             vec![
                 Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
             ]
-        ))
+        )
     };
+}
+
+fn main() {
+    let width: u32 = 512;
+    let height: u32 = 512;
+
+    let logical_size = LogicalSize::new(width as f64, height as f64);
+
+    let mut events_loop = glium::glutin::EventsLoop::new();
+    let window = glium::glutin::WindowBuilder::new()
+        .with_dimensions(logical_size)
+        .with_title("Pathtracer");
+    let context = glium::glutin::ContextBuilder::new();
+    let display = glium::Display::new(window, context, &events_loop).unwrap();
+
+    let mut frame_index = 0;
+
+    let scene = Arc::new(Mutex::new(RefCell::new(Scene::new(Vec::new(), Vec::new()))));
 
     let camera = {
         let x = frame_index as f32 / 40.0;
@@ -285,12 +292,14 @@ fn main() {
         let camera = camera.clone();
         let scene = scene.clone();
         WorkerPool::new(NUM_WORKER_THREADS, move |work_tile|{
-            render(work_tile, &backbuffer2, &camera, &scene);
+            render(work_tile, &backbuffer2, &camera, scene.clone());
         })
     };
 
     let mut running = true;
     while running {
+        update(scene.clone(), frame_index);
+
         for _ in 0..1 {
             const TILE_SIZE: u32 = 64;
             let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
@@ -556,7 +565,7 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: &Scene) {
+fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<Mutex<RefCell<Scene>>>) {
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
@@ -576,10 +585,13 @@ fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, sc
             };
 
             let hdr_radiance = {
-                const N: usize = 1;
+                let scene = scene.lock().unwrap();
+                let scene = scene.borrow();
+
+                const N: usize = 32;
                 let mut hdr_radiance = Vec3::zero();
                 for _ in 0..N {
-                    hdr_radiance += trace_radiance(&ray, scene, 3);
+                    hdr_radiance += trace_radiance(&ray, &*scene, 2);
                 }
                 hdr_radiance / N as f32
             };
