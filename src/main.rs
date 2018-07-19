@@ -94,13 +94,13 @@ impl Worker {
 #[derive(Debug)]
 pub struct WorkerPool<D: Send + 'static, J: FnMut(D) + Sync + Send + 'static> {
     workers: Vec<Worker>,
-    work_queue: Arc<Mutex<RefCell<VecDeque<D>>>>,
+    work_queue: Arc<(Mutex<RefCell<VecDeque<D>>>, Condvar)>,
     processor: Arc<Mutex<RefCell<J>>>,
 }
 
 impl<D: Send, J: FnMut(D) + Sync + Send> WorkerPool<D, J> {
     pub fn new(num_workers: usize, processor: J) -> Self {
-        let work_queue = Arc::new(Mutex::new(RefCell::new(VecDeque::new())));
+        let work_queue = Arc::new((Mutex::new(RefCell::new(VecDeque::new())), Condvar::new()));
         let processor = Arc::new(Mutex::new(RefCell::new(processor)));
 
         let workers = (0..num_workers).map(|i| {
@@ -109,8 +109,9 @@ impl<D: Send, J: FnMut(D) + Sync + Send> WorkerPool<D, J> {
 
             let thread = thread::spawn(move || {
                 loop {
-                    let work_queue = match work_queue2.lock() {
-                        Ok(work_queue) => work_queue,
+                    let (ref queue, ref condvar) = *work_queue2;
+                    let mut queue = match queue.lock() {
+                        Ok(queue) => queue,
                         Err(_poisened_guard) => {
                             // When another thread panics while having locked the mutex. It is
                             // considered poisened and cannot be aquired. However, Err returns the
@@ -118,19 +119,18 @@ impl<D: Send, J: FnMut(D) + Sync + Send> WorkerPool<D, J> {
                             panic!(Self::panic_mutex_lock_message("work_queue"));
                         },
                     };
-                    let mut work_queue = work_queue.borrow_mut();
+                    while queue.borrow().len() <= 0 {
+                        queue = condvar.wait(queue).unwrap();
+                    }
+                    let mut queue = queue.borrow_mut();
                     
-                    if let Some(work) = work_queue.pop_front() {
+                    if let Some(work) = queue.pop_front() {
                         let processor = match processor2.lock() {
                             Ok(processor) => processor,
                             Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("processor")),
                         };
                         let mut processor = processor.borrow_mut();
-
-                        println!("[{}]   processing", i);
                         (&mut *processor)(work);
-                    } else {
-                        // @TODO: Put the thread to rest
                     }
                 }
             });
@@ -146,14 +146,15 @@ impl<D: Send, J: FnMut(D) + Sync + Send> WorkerPool<D, J> {
     }
 
     pub fn process(&self, job_data: D) {
-        let work_queue = match self.work_queue.lock() {
-            Ok(work_queue) => work_queue,
+        let (ref queue, ref condvar) = *self.work_queue;
+        let queue = match queue.lock() {
+            Ok(queue) => queue,
             Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("work_queue")),
         };
-        let mut work_queue = work_queue.borrow_mut();
-        work_queue.push_back(job_data);
+        let mut queue = queue.borrow_mut();
+        queue.push_back(job_data);
 
-        // @TODO: Make up all the workers
+        condvar.notify_one();
     }
 
     pub fn wait(&self) {
@@ -226,17 +227,6 @@ fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_ne
     Camera::new(projection_plane, position)
 }
 
-fn process_tiles(work_queue: Arc<Mutex<RefCell<VecDeque<WorkTile>>>>, backbuffer: Arc<Backbuffer>, camera: Arc<Camera>, scene: Arc<Scene>) {
-    loop {
-        // @TODO: This is non-blocking
-        let work_queue = work_queue.lock().unwrap();
-        let mut work_queue = work_queue.borrow_mut();
-        if let Some(work_tile) = work_queue.pop_front() {
-            render(work_tile, backbuffer.clone(), &camera, &scene);
-        }
-    }
-}
-
 fn main() {
     let width: u32 = 512;
     let height: u32 = 512;
@@ -288,39 +278,20 @@ fn main() {
     };
 
     let backbuffer = Arc::new(Backbuffer::new(width, height));
-    let work_queue = Arc::new(Mutex::new(RefCell::new(VecDeque::new())));
 
-    const NUMBER_OF_THREADS: usize = 8;
-    for _ in 0..NUMBER_OF_THREADS {
-        let backbuffer = backbuffer.clone();
-        let work_queue = work_queue.clone();
+    const NUM_WORKER_THREADS: usize = 4;
+    let worker_pool = {
+        let backbuffer2 = backbuffer.clone();
         let camera = camera.clone();
         let scene = scene.clone();
-        thread::spawn(move || {
-            process_tiles(work_queue, backbuffer, camera, scene);
-        });
-    }
-
-
-    {
-        let backbuffer2 = backbuffer.clone();
-        let worker_pool = WorkerPool::new(4, move |_work|{
-            println!("processing!");
-            println!("backbuffer.width() = {}", backbuffer2.width);
-        });
-        worker_pool.process(WorkTile::new(Vec2u::zero(), Vec2u::zero(), Vec2u::one()));
-        worker_pool.wait();
-    }
-
-
-
+        WorkerPool::new(NUM_WORKER_THREADS, move |work_tile|{
+            render(work_tile, &backbuffer2, &camera, &scene);
+        })
+    };
 
     let mut running = true;
     while running {
         for _ in 0..1 {
-            let work_queue = work_queue.lock().unwrap();
-            let mut work_queue = work_queue.borrow_mut();
-
             const TILE_SIZE: u32 = 64;
             let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
             let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
@@ -330,11 +301,9 @@ fn main() {
                     let tile_index = Vec2u::new(x, y);
                     let tile_position = Vec2u::new(x*TILE_SIZE, y*TILE_SIZE);
                     let work_tile = WorkTile::new(tile_index, tile_position, tile_size);
-                    work_queue.push_back(work_tile);
+                    worker_pool.process(work_tile);
                 }
             }
-
-            println!("work_queue.len() = {}", work_queue.len());
         }
 
         let target = display.draw();
@@ -587,7 +556,7 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-fn render(work_tile: WorkTile, backbuffer: Arc<Backbuffer>, camera: &Camera, scene: &Scene) {
+fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: &Scene) {
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
