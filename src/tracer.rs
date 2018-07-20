@@ -221,10 +221,32 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
                 let origin = {
                     let du = x as f32*camera_u;
                     let dv = y as f32*camera_v;
+
                     camera.projection_plane.origin + du + dv
                 };
                 let direction = (origin - camera.eye).normalize();
-                Ray::new(origin, direction)
+
+                // This is the ray without the lens
+                //return Ray::new(origin, direction);
+
+                {
+                    let r0 = 2.0*random32() - 1.0;
+                    let r1 = 2.0*random32() - 1.0;
+
+                    // @TODO: This should be the other way around. High apertures result in sharp images.
+                    const LENS_APERTURE: f32 = 20.0;
+                    let l_u = LENS_APERTURE*r0;
+                    let l_v = LENS_APERTURE*r1;
+
+                    // @TODO: This results in a spherical focus "plane" which is really ideal
+                    const FOCUS_DISTANCE: f32 = 10.0;
+                    let point_on_focus_plane = origin + FOCUS_DISTANCE*direction;
+
+                    let lens_origin = origin + l_u*camera_u + l_v*camera_v;
+                    let lens_direction = (point_on_focus_plane - lens_origin).normalize();
+
+                    Ray::new(lens_origin, lens_direction)
+                }
             };
 
             let hdr_radiance = {
