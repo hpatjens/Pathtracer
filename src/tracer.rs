@@ -205,14 +205,15 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<RwLock<Scene>>) {
+pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwLock<Camera>>, scene: Arc<RwLock<Scene>>) {
+    let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
+    let camera = camera.read().unwrap(); // @TODO: Handle the unwrap
+
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
     let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);
-    
-    let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
 
     for y in y0..y1 {
         for x in x0..x1 {

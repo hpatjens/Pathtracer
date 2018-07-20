@@ -27,36 +27,48 @@ extern "C" {
 const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
 
-fn update(scene: &Arc<RwLock<Scene>>, frame_index: usize) {
-    let material1 = Material::Phyiscally{
-        reflectivity: Vec3::new(0.7, 0.73, 0.72),
-        roughness: 1.0,
-        metalness: 0.0,
-    };
-    let material2 = Material::Phyiscally{
-        reflectivity: Vec3::new(0.5, 0.5, 0.5),
-        roughness: 1.0,
-        metalness: 0.0,
-    };
+fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
+    {
+        let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
+        *camera = {
+            let x = frame_index as f32 / 80.0;
+            const D: f32 = 20.0;
+            let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
+            tracer::look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)
+        };
+    }
 
-    let x = frame_index as f32 / 40.0;
-    let position1 = Vec3::new(2.3*f32::sin(x), f32::cos(x), 2.1*f32::cos(x));
-    let position2 = Vec3::new(1.2*f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), 1.6*f32::cos(0.923*x + 0.2345));
-    let position3 = Vec3::new(f32::sin(1.43*x + 0.224), f32::cos(1.76*x + 0.2134), f32::cos(0.123*x + 0.6346));
-    let light_position = Vec3::new(0.0, 3.5, -1.0);
+    {
+        let material1 = Material::Phyiscally{
+            reflectivity: Vec3::new(0.7, 0.73, 0.72),
+            roughness: 1.0,
+            metalness: 0.0,
+        };
+        let material2 = Material::Phyiscally{
+            reflectivity: Vec3::new(0.5, 0.5, 0.5),
+            roughness: 1.0,
+            metalness: 0.0,
+        };
 
-    let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
-    *scene = Scene::new(
-        vec![
-            Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
-            Sphere::new(position1, 1.0, material1.clone()),
-            Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
-            Sphere::new(position3, 1.0, Material::Glass),
-        ],
-        vec![
-            Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
-        ]
-    )
+        let x = frame_index as f32 / 40.0;
+        let position1 = Vec3::new(2.3*f32::sin(x), f32::cos(x), 2.1*f32::cos(x));
+        let position2 = Vec3::new(1.2*f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), 1.6*f32::cos(0.923*x + 0.2345));
+        let position3 = Vec3::new(f32::sin(1.43*x + 0.224), f32::cos(1.76*x + 0.2134), f32::cos(0.123*x + 0.6346));
+        let light_position = Vec3::new(0.0, 3.5, -1.0);
+
+        let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
+        *scene = Scene::new(
+            vec![
+                Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
+                Sphere::new(position1, 1.0, material1.clone()),
+                Sphere::new(position2, 0.5, Material::Emissive(Vec3::new(0.0, 5.0, 0.0))),
+                Sphere::new(position3, 1.2, Material::Glass),
+            ],
+            vec![
+                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
+            ]
+        )
+    }
 }
 
 fn main() {
@@ -74,24 +86,18 @@ fn main() {
 
     let mut frame_index = 0;
 
-    let camera = {
-        let x = frame_index as f32 / 40.0;
-        const D: f32 = 20.0;
-        let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
-        Arc::new(tracer::look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0))
-    };
-
     let backbuffer = Arc::new(tracer::Backbuffer::new(width, height));
 
     let scene = Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())));
+    let camera = Arc::new(RwLock::new(tracer::look_at(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
 
     let worker_pool = {
         const NUM_WORKER_THREADS: usize = 8;
         let backbuffer2 = backbuffer.clone();
-        let camera = camera.clone();
+        let camera2 = camera.clone();
         let scene2 = scene.clone();
         worker::WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |work_tile| {
-            tracer::render(work_tile, &backbuffer2, &camera, scene2.clone());
+            tracer::render(work_tile, &backbuffer2, camera2.clone(), scene2.clone());
         }))
     };
 
@@ -99,7 +105,7 @@ fn main() {
     while running {
         let frame_time_start = time::precise_time_ns();
 
-        update(&scene, frame_index);
+        update(&scene, &camera, frame_index);
 
         for _ in 0..1 {
             const TILE_SIZE: u32 = 32;
