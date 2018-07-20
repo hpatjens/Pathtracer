@@ -191,7 +191,7 @@ fn main() {
 
     let backbuffer = Arc::new(Backbuffer::new(width, height));
 
-    const NUM_WORKER_THREADS: usize = 1;
+    const NUM_WORKER_THREADS: usize = 4;
     let worker_pool = WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |_work| {}));
 
     let mut scene = Scene::new(Vec::new(), Vec::new());
@@ -215,7 +215,7 @@ fn main() {
             }
 
             for _ in 0..1 {
-                const TILE_SIZE: u32 = 32;
+                const TILE_SIZE: u32 = 64;
                 let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
                 let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
                 let num_tiles_y = (backbuffer.height + TILE_SIZE - 1) / TILE_SIZE;

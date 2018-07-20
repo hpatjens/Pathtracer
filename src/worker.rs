@@ -1,37 +1,19 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Condvar};
 use std::thread;
 use std::thread::JoinHandle;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum WorkerState {
-    Working,
-    Waiting,
-}
-
-#[derive(Debug)]
+#[derive(Debug, new)]
 struct Worker {
     index: usize,
-    state: Arc<Mutex<WorkerState>>,
     thread: JoinHandle<()>,
-}
-
-impl Worker {
-    pub fn new(index: usize, state: Arc<Mutex<WorkerState>>, thread: JoinHandle<()>) -> Self {
-        Worker {
-            index: index,
-            state: state,
-            thread: thread,
-        }
-    }
 }
 
 pub struct WorkerPool<D: Send + 'static> {
     workers: Vec<Worker>,
     work_queue: Arc<(Mutex<VecDeque<D>>, Condvar)>,
-    processor: Arc<Mutex<Box<FnMut(D) + Send>>>,
-    stop_request: AtomicBool,
+    processor: Arc<Mutex<Box<FnMut(D) + Send>>>, // @TODO: This prevents the threads from running in parallel
+    num_waiting_workers: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl<D: Send> WorkerPool<D> {
@@ -39,15 +21,28 @@ impl<D: Send> WorkerPool<D> {
         let work_queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
         let processor = Arc::new(Mutex::new(processor));
 
+        let num_waiting_workers = Arc::new((Mutex::new(0), Condvar::new()));
+
         let workers = (0..num_workers).map(|i| {
             let work_queue2 = work_queue.clone();
             let processor2 = processor.clone();
 
-            let worker_state = Arc::new(Mutex::new(WorkerState::Waiting));
-            let worker_state2 = worker_state.clone();
+            let num_waiting_workers2 = num_waiting_workers.clone();
 
             let thread = thread::spawn(move || {
                 loop {
+                    // Here, it is assumed that the thread will have to wait on the condvar of
+                    // the queue. Therefore the number of waiting workers is incremented. Since
+                    // the owning thread might wait on the condvar of the num_waiting_workers 
+                    // variable, it has to be notified.
+                    {
+                        let (ref num_waiting_workers, ref condvar) = *num_waiting_workers2;
+                        let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                        *num_waiting_workers += 1;
+
+                        condvar.notify_one();
+                    }
+
                     let (ref queue, ref condvar) = *work_queue2;
                     let mut queue = match queue.lock() {
                         Ok(queue) => queue,
@@ -60,21 +55,19 @@ impl<D: Send> WorkerPool<D> {
                         },
                     };
                     while queue.len() <= 0 {
-                        {
-                            // @TODO: Make a function that encapsulates this.
-                            // @TODO: Handle the unwrap()
-                            let mut worker_state = worker_state2.lock().unwrap();
-                            *worker_state = WorkerState::Waiting;
-                        }
                         queue = condvar.wait(queue).unwrap();
                     }
+
+                    // After the worker gets new work and starts processing it, the number of
+                    // waiting workers has to be decremented.
                     {
-                        // @TODO: Make a function that encapsulates this.
-                        // @TODO: Handle the unwrap()
-                        let mut worker_state = worker_state2.lock().unwrap();
-                        *worker_state = WorkerState::Waiting;
+                        let (ref num_waiting_workers, ref condvar) = *num_waiting_workers2;
+                        let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                        *num_waiting_workers -= 1;
+
+                        condvar.notify_one();
                     }
-                    
+
                     if let Some(work) = queue.pop_front() {
                         let mut processor = match processor2.lock() {
                             Ok(processor) => processor,
@@ -85,33 +78,29 @@ impl<D: Send> WorkerPool<D> {
                 }
             });
 
-            Worker::new(i, worker_state, thread)
+            Worker::new(i, thread)
         }).collect();
 
         WorkerPool {
             workers: workers,
             work_queue: work_queue,
             processor: processor,
-            stop_request: AtomicBool::new(false),
+            num_waiting_workers: num_waiting_workers,
         }
     }
 
     pub fn set_processor(&self, new_processor: Box<FnMut(D) + Send>) {
-        let mut processor = self.processor.lock().unwrap();
+        let mut processor = self.processor.lock().unwrap(); // @TODO: Handle the unwrap
         *processor = new_processor;
     }
 
     pub fn queue_len(&self) -> usize {
         let (ref queue, ..) = *self.work_queue;
-        let queue = queue.lock().unwrap();
+        let queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
         queue.len()
     }
 
-    pub fn process(&self, job_data: D) -> bool {
-        if self.stop_request.load(Ordering::Relaxed) {
-            return false;
-        }
-
+    pub fn process(&self, job_data: D) {
         let (ref queue, ref condvar) = *self.work_queue;
         let mut queue = match queue.lock() {
             Ok(queue) => queue,
@@ -119,39 +108,39 @@ impl<D: Send> WorkerPool<D> {
         };
         queue.push_back(job_data);
 
+        // @TODO: Only one should be notified.
         condvar.notify_all();
-
-        true
     }
 
     pub fn wait(&self) {
-        self.stop_request.store(true, Ordering::Relaxed);
+        while {
+            // The num_waiting_workers variable is incremented before the worker checks 
+            // whether there is work in the queue. When there is no work, the worker
+            // waits on the condvar of the queue. In this case the increment does make
+            // sense and represents the state of the worker. When there is work in the
+            // queue, the worker can go on to process the work. In this case, the variable
+            // num_waiting_workers is decremented again. Therefore it is possible (only
+            // for a split second) that all workers are considered waiting, although 
+            // there is work to do.
+            // For this reason, it is necessary to wait on the condvar of num_waiting_workers
+            // and check if all workers are waiting BUT ALSO whether the queue is really 
+            // empty.
+            // Keep in mind that while this function is run, no work can be inserted into
+            // the queue as only the owning thread can run the process function. (But not
+            // while this one is executed.)
 
-        // @TODO: Replace the busy waiting with a condvar
-        loop {
-            let queue_empty = {
-                let (ref queue, ..) = *self.work_queue;
-                let queue = queue.lock().unwrap();
-                queue.len() == 0
-            };
-            if queue_empty && self.all_workers_waiting() {
-                break;
+            // Waiting for all workers to be considered waiting.
+            {
+                let (ref num_waiting_workers, ref cvar) = *self.num_waiting_workers;
+                let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                while *num_waiting_workers != self.workers.len() {
+                    num_waiting_workers = cvar.wait(num_waiting_workers).unwrap(); // @TODO: Handle the unwrap
+                }
             }
-        }
 
-        self.stop_request.store(false, Ordering::Relaxed);
-    }
-
-    pub fn all_workers_waiting(&self) -> bool {
-        let mut all_waiting = true;
-        for worker in &self.workers {
-            // @TODO: Handle the unwrap
-            let state = worker.state.lock().unwrap();
-            if *state == WorkerState::Working {
-                all_waiting = false;
-            }
-        }
-        all_waiting
+            // Check if the queue is really empty.
+            self.queue_len() > 0
+        }{}
     }
 
     fn panic_mutex_lock_message(mutex_string: &str) -> String {
