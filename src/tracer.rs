@@ -87,8 +87,34 @@ impl Backbuffer {
     }
 }
 
-fn reflect(incoming: Vec3, n: Vec3) -> Vec3 {
-    incoming - 2.0*incoming.dot(n)*n
+fn reflect(incoming: Vec3, normal: Vec3) -> Vec3 {
+    // Bear in mind that incoming is directed at the surface!
+    incoming - 2.0*incoming.dot(normal)*normal
+}
+
+fn refract(incoming: Vec3, normal: Vec3, n1: f32, n2: f32) -> Vec3 {
+    // Bear in mind that incoming is directed at the surface!
+
+    // Pythagorean trigonometric identity: sin^2(a) + cos^2(a) = 1
+    // Since cos(a) is easy to compute, sin(a) can be computed by
+    // sin(a) = sqrt(1 - cos^2(a))
+    let cos_theta1 = -incoming.dot(normal);
+    // @TODO: Test whether this is really faster.
+    // @TODO: Implement a faster but worse sqrt.
+    // Look at this article: https://www.codeproject.com/Articles/69941/Best-Square-Root-Method-Algorithm-Function-Precisi
+    let sin_theta1 = f32::sqrt(1.0 - cos_theta1*cos_theta1);
+
+    // Snell's law: sin(theta_1) / sin(theta_2) = n_2 / n_1
+    // where theta_1: angle between the incoming ray and normal
+    //       theta_2: angle between the outgoing ray and -normal
+    //       n1: index of refraction for the medium above the surface
+    //       n2: index of refraction for the medium below the surface
+    let sin_theta2 = (sin_theta1*n1)/n2;
+    
+    // Corresponds to the projection of 'incoming' onto the ground plane.
+    let p = incoming + cos_theta1*normal;
+    
+    -normal + p.normalize()*sin_theta2
 }
 
 fn construct_coordinate_system(normal: Vec3) -> (Vec3, Vec3, Vec3) {
@@ -119,6 +145,8 @@ fn brdf_lambert(reflectivity: Vec3, radiance: Vec3) -> Vec3 {
 }
 
 fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
+    // @TODO: Find all the places where NANs can be generated and fix as many as it makes sense.
+
     if depth <= 0 {
         return Vec3::zero();
     }
@@ -126,21 +154,27 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     let nearest_hit = find_scene_hit(ray, scene);
 
     if let Some(nearest_hit) = nearest_hit {
-        let outwards_shifted_position = nearest_hit.position + 0.0001*nearest_hit.normal; // @TODO: Find a good factor
+        const SHIFT_AMOUNT: f32 = 0.0001; // @TODO: Find a good factor and maybe make it dependent on the slope
+        let outwards_shifted_position = ||{ nearest_hit.position + SHIFT_AMOUNT*nearest_hit.normal };
+        let inwards_shifted_position  = ||{ nearest_hit.position - SHIFT_AMOUNT*nearest_hit.normal };
 
         match nearest_hit.material {
             Material::None => Vec3::one(),
             Material::Emissive(ref color) => color.clone(),
             Material::Mirror => {
                 let reflection_direction = reflect(ray.direction, nearest_hit.normal);
-                trace_radiance(&Ray::new(outwards_shifted_position, reflection_direction), scene, depth - 1)
+                trace_radiance(&Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
+            },
+            Material::Glass => {
+                let refraction_direction = refract(ray.direction, nearest_hit.normal, 1.0, 1.5);
+                trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
             Material::Phyiscally{ ref reflectivity, .. } => {
                 let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random32(), random32());
                 let h = sample_hemisphere_cos(xi);
                 let direction = h.x*ax + h.y*ay + h.z*az;
-                let ray = Ray::new(outwards_shifted_position, direction);
+                let ray = Ray::new(outwards_shifted_position(), direction);
 
                 let cos_theta_reflection = direction.dot(nearest_hit.normal);
 
@@ -196,7 +230,7 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera
                 const N: usize = 1;
                 let mut hdr_radiance = Vec3::zero();
                 for _ in 0..N {
-                    hdr_radiance += trace_radiance(&ray, &*scene, 2);
+                    hdr_radiance += trace_radiance(&ray, &*scene, 4);
                 }
                 hdr_radiance / N as f32
             };

@@ -40,8 +40,9 @@ fn update(scene: &Arc<RwLock<Scene>>, frame_index: usize) {
     };
 
     let x = frame_index as f32 / 40.0;
-    let position1 = Vec3::new(f32::sin(x), f32::cos(x), f32::cos(x));
-    let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
+    let position1 = Vec3::new(2.3*f32::sin(x), f32::cos(x), 2.1*f32::cos(x));
+    let position2 = Vec3::new(1.2*f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), 1.6*f32::cos(0.923*x + 0.2345));
+    let position3 = Vec3::new(f32::sin(1.43*x + 0.224), f32::cos(1.76*x + 0.2134), f32::cos(0.123*x + 0.6346));
     let light_position = Vec3::new(0.0, 3.5, -1.0);
 
     let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
@@ -50,6 +51,7 @@ fn update(scene: &Arc<RwLock<Scene>>, frame_index: usize) {
             Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
             Sphere::new(position1, 1.0, material1.clone()),
             Sphere::new(position2, 1.0, Material::Emissive(Vec3::new(0.0, 1.0, 0.0))),
+            Sphere::new(position3, 1.0, Material::Glass),
         ],
         vec![
             Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())

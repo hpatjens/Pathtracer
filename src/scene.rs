@@ -8,6 +8,7 @@ pub enum Material {
     None,
     Emissive(Vec3),
     Mirror,
+    Glass,
     Phyiscally {
         reflectivity: Vec3,
         roughness: f32,
@@ -55,7 +56,13 @@ fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
     let t1 = projection - on_ray_in_sphere;
     let t2 = projection + on_ray_in_sphere;
 
-    let parameter = if t1 < t2 { t1 } else { t2 };
+    let mut parameter = -2.0;
+    if t1 > parameter && t1 > 0.0 { parameter = t1; }
+    if t2 < parameter && t2 > 0.0 { parameter = t2; }
+    if parameter < -1.0 {
+        return None;
+    }
+
     let position = ray.origin + parameter*ray.direction;
     let normal = (position - sphere.origin).normalize();
     let material = &sphere.material;
