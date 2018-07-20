@@ -34,26 +34,21 @@ impl<D: Send> WorkerPool<D> {
                     // variable, it has to be notified.
                     {
                         let (ref num_waiting_workers, ref condvar) = *num_waiting_workers2;
-                        let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                        let mut num_waiting_workers = num_waiting_workers.lock().expect("Could not aquire the mutex for incrementing the waiting workers.");
                         *num_waiting_workers += 1;
 
                         condvar.notify_one();
                     }
 
+                    // At this point the worker is considered waiting although there might be 
+                    // work within the queue. Due to this inaccuracy the wait method has to
+                    // check whether the queue is really empty when all workers signal that
+                    // they are waiting.
                     {
                         let (ref queue, ref condvar) = *work_queue2;
-                        let mut queue = match queue.lock() {
-                            Ok(queue) => queue,
-                            Err(_poisened_guard) => {
-                                // When another thread panics while having locked the mutex. It is
-                                // considered poisened and cannot be aquired. However, Err returns the
-                                // poisened guard which could be used anyway which is not a good idea 
-                                // in this case as the state of the queue is unknown.
-                                panic!(Self::panic_mutex_lock_message("work_queue"));
-                            },
-                        };
+                        let mut queue = queue.lock().expect("Could not aquire the mutex for waiting on the queue.");
                         while queue.len() <= 0 {
-                            queue = condvar.wait(queue).unwrap();
+                            queue = condvar.wait(queue).expect("Could not aquire the mutex for waiting on the queue while waiting on the condvar.");
                         }
                     }
 
@@ -61,19 +56,21 @@ impl<D: Send> WorkerPool<D> {
                     // waiting workers has to be decremented.
                     {
                         let (ref num_waiting_workers, ref condvar) = *num_waiting_workers2;
-                        let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                        let mut num_waiting_workers = num_waiting_workers.lock().expect("Could not aquire the mutex for decrementing the waiting workers.");
                         *num_waiting_workers -= 1;
 
                         condvar.notify_one();
                     }
 
+                    // Here, the lock to the queue is aquired again. It would be possible to
+                    // keep the lock from above but this would reduce the chance for other
+                    // threads to access the queue.
+                    // It is important to drop the lock with in the if let so that the mutex
+                    // for the queue is unlocked while processing the work. Otherwise parallelism
+                    // would not be possible while processing.
                     {
-                        // @TODO: Reuse the queue variable from above and test whether this lead
-                        // to the thread being blocked too long.
-                        let (ref queue, ..) = *work_queue2;
-                        let mut queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
+                        let mut queue = work_queue2.0.lock().expect("Could not aquire the mutex for dequeuing");
                         if let Some(work) = queue.pop_front() {
-                            // Not dropping the guard has the consequence to blocking parallelism altogether.
                             drop(queue);
                             processor2(work);
                         }
@@ -92,17 +89,15 @@ impl<D: Send> WorkerPool<D> {
     }
 
     pub fn queue_len(&self) -> usize {
-        let (ref queue, ..) = *self.work_queue;
-        let queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
-        queue.len()
+        self.work_queue.0.lock().expect("Could not aquire the mutex to get the queue length.").len()
     }
 
     pub fn process(&self, job_data: D) {
         let (ref queue, ref condvar) = *self.work_queue;
-        let mut queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
+        let mut queue = queue.lock().expect("Could not aquire the mutex of the queue for inserting.");
         queue.push_back(job_data);
 
-        condvar.notify_all(); // @TODO: Only one should be notified.
+        condvar.notify_one();
     }
 
     pub fn wait(&self) {
@@ -123,18 +118,14 @@ impl<D: Send> WorkerPool<D> {
             // while this one is executed.)
 
             {
-                let (ref num_waiting_workers, ref cvar) = *self.num_waiting_workers;
-                let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
+                let (ref num_waiting_workers, ref condvar) = *self.num_waiting_workers;
+                let mut num_waiting_workers = num_waiting_workers.lock().expect("Could not aquire the mutex for num_waiting_workers in wait.");
                 while *num_waiting_workers != self.workers.len() {
-                    num_waiting_workers = cvar.wait(num_waiting_workers).unwrap(); // @TODO: Handle the unwrap
+                    num_waiting_workers = condvar.wait(num_waiting_workers).expect("Could not aquire the mutex for num_waiting_workers in wait while waiting on the condvar.");
                 }
             }
 
             self.queue_len() > 0
         }{}
-    }
-
-    fn panic_mutex_lock_message(mutex_string: &str) -> String {
-        format!("Could not aquire the mutex for the {} within the WorkerPool as the mutex is poisened. This indicates that some erroneous condition on another thread was not handled correctly.", mutex_string)
     }
 }
