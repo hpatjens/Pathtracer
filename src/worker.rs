@@ -12,21 +12,18 @@ struct Worker {
 pub struct WorkerPool<D: Send + 'static> {
     workers: Vec<Worker>,
     work_queue: Arc<(Mutex<VecDeque<D>>, Condvar)>,
-    processor: Arc<Mutex<Box<FnMut(D) + Send>>>, // @TODO: This prevents the threads from running in parallel
     num_waiting_workers: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl<D: Send> WorkerPool<D> {
-    pub fn new(num_workers: usize, processor: Box<FnMut(D) + Send>) -> Self {
+    pub fn new(num_workers: usize, processor: Box<Fn(D) + Send + Sync>) -> Self {
         let work_queue = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
-        let processor = Arc::new(Mutex::new(processor));
-
+        let processor = Arc::new(processor);
         let num_waiting_workers = Arc::new((Mutex::new(0), Condvar::new()));
 
         let workers = (0..num_workers).map(|i| {
             let work_queue2 = work_queue.clone();
             let processor2 = processor.clone();
-
             let num_waiting_workers2 = num_waiting_workers.clone();
 
             let thread = thread::spawn(move || {
@@ -43,19 +40,21 @@ impl<D: Send> WorkerPool<D> {
                         condvar.notify_one();
                     }
 
-                    let (ref queue, ref condvar) = *work_queue2;
-                    let mut queue = match queue.lock() {
-                        Ok(queue) => queue,
-                        Err(_poisened_guard) => {
-                            // When another thread panics while having locked the mutex. It is
-                            // considered poisened and cannot be aquired. However, Err returns the
-                            // poisened guard which could be used anyway which is not a good idea 
-                            // in this case as the state of the queue is unknown.
-                            panic!(Self::panic_mutex_lock_message("work_queue"));
-                        },
-                    };
-                    while queue.len() <= 0 {
-                        queue = condvar.wait(queue).unwrap();
+                    {
+                        let (ref queue, ref condvar) = *work_queue2;
+                        let mut queue = match queue.lock() {
+                            Ok(queue) => queue,
+                            Err(_poisened_guard) => {
+                                // When another thread panics while having locked the mutex. It is
+                                // considered poisened and cannot be aquired. However, Err returns the
+                                // poisened guard which could be used anyway which is not a good idea 
+                                // in this case as the state of the queue is unknown.
+                                panic!(Self::panic_mutex_lock_message("work_queue"));
+                            },
+                        };
+                        while queue.len() <= 0 {
+                            queue = condvar.wait(queue).unwrap();
+                        }
                     }
 
                     // After the worker gets new work and starts processing it, the number of
@@ -68,12 +67,14 @@ impl<D: Send> WorkerPool<D> {
                         condvar.notify_one();
                     }
 
-                    if let Some(work) = queue.pop_front() {
-                        let mut processor = match processor2.lock() {
-                            Ok(processor) => processor,
-                            Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("processor")),
-                        };
-                        (&mut *processor)(work);
+                    {
+                        // @TODO: Reuse the queue variable from above and test whether this lead
+                        // to the thread being blocked too long.
+                        let (ref queue, ..) = *work_queue2;
+                        let mut queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
+                        if let Some(work) = queue.pop_front() {
+                            processor2(work);
+                        }
                     }
                 }
             });
@@ -84,14 +85,8 @@ impl<D: Send> WorkerPool<D> {
         WorkerPool {
             workers: workers,
             work_queue: work_queue,
-            processor: processor,
             num_waiting_workers: num_waiting_workers,
         }
-    }
-
-    pub fn set_processor(&self, new_processor: Box<FnMut(D) + Send>) {
-        let mut processor = self.processor.lock().unwrap(); // @TODO: Handle the unwrap
-        *processor = new_processor;
     }
 
     pub fn queue_len(&self) -> usize {
@@ -102,14 +97,10 @@ impl<D: Send> WorkerPool<D> {
 
     pub fn process(&self, job_data: D) {
         let (ref queue, ref condvar) = *self.work_queue;
-        let mut queue = match queue.lock() {
-            Ok(queue) => queue,
-            Err(_poisened_guard) => panic!(Self::panic_mutex_lock_message("work_queue")),
-        };
+        let mut queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
         queue.push_back(job_data);
 
-        // @TODO: Only one should be notified.
-        condvar.notify_all();
+        condvar.notify_all(); // @TODO: Only one should be notified.
     }
 
     pub fn wait(&self) {
@@ -129,7 +120,6 @@ impl<D: Send> WorkerPool<D> {
             // the queue as only the owning thread can run the process function. (But not
             // while this one is executed.)
 
-            // Waiting for all workers to be considered waiting.
             {
                 let (ref num_waiting_workers, ref cvar) = *self.num_waiting_workers;
                 let mut num_waiting_workers = num_waiting_workers.lock().unwrap(); // @TODO: Handle the unwrap
@@ -138,7 +128,6 @@ impl<D: Send> WorkerPool<D> {
                 }
             }
 
-            // Check if the queue is really empty.
             self.queue_len() > 0
         }{}
     }

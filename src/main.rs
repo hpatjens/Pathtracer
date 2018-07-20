@@ -14,7 +14,7 @@ use glium::glutin::dpi::LogicalSize;
 use hmath::*;
 
 use std::cell::UnsafeCell;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 type Vec2 = Vector2<f32>;
 type Vec3 = Vector3<f32>;
@@ -138,7 +138,7 @@ fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_ne
     Camera::new(projection_plane, position)
 }
 
-fn update(scene: &mut Scene, frame_index: usize) {
+fn update(scene: &Arc<RwLock<Scene>>, frame_index: usize) {
     let material1 = Material::Phyiscally{
         reflectivity: Vec3::new(0.7, 0.73, 0.72),
         roughness: 1.0,
@@ -155,6 +155,7 @@ fn update(scene: &mut Scene, frame_index: usize) {
     let position2 = Vec3::new(f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), f32::cos(0.923*x + 0.2345));
     let light_position = Vec3::new(0.0, 3.5, -1.0);
 
+    let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
     *scene = Scene::new(
         vec![
             Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
@@ -191,51 +192,41 @@ fn main() {
 
     let backbuffer = Arc::new(Backbuffer::new(width, height));
 
-    const NUM_WORKER_THREADS: usize = 4;
-    let worker_pool = WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |_work| {}));
+    let scene = Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())));
 
-    let mut scene = Scene::new(Vec::new(), Vec::new());
+    let worker_pool = {
+        const NUM_WORKER_THREADS: usize = 4;
+        let backbuffer2 = backbuffer.clone();
+        let camera = camera.clone();
+        let scene2 = scene.clone();
+        WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |work_tile| {
+            render(work_tile, &backbuffer2, &camera, scene2.clone());
+        }))
+    };
 
     let mut running = true;
     while running {
         let frame_time_start = time::precise_time_ns();
 
-        update(&mut scene, frame_index);
+        update(&scene, frame_index);
 
-        scene = {
-            let scene = Arc::new(scene);
-
-            {
-                let backbuffer2 = backbuffer.clone();
-                let camera = camera.clone();
-                let scene2 = scene.clone();
-                worker_pool.set_processor(Box::new(move |work_tile|{
-                    render(work_tile, &backbuffer2, &camera, scene2.clone());
-                }));
-            }
-
-            for _ in 0..1 {
-                const TILE_SIZE: u32 = 64;
-                let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
-                let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
-                let num_tiles_y = (backbuffer.height + TILE_SIZE - 1) / TILE_SIZE;
-                for y in 0..num_tiles_y {
-                    for x in 0..num_tiles_x {
-                        let tile_index = Vec2u::new(x, y);
-                        let tile_position = Vec2u::new(x*TILE_SIZE, y*TILE_SIZE);
-                        let work_tile = WorkTile::new(tile_index, tile_position, tile_size);
-                        worker_pool.process(work_tile);
-                    }
+        for _ in 0..1 {
+            const TILE_SIZE: u32 = 32;
+            let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
+            let num_tiles_x = (backbuffer.width + TILE_SIZE - 1) / TILE_SIZE;
+            let num_tiles_y = (backbuffer.height + TILE_SIZE - 1) / TILE_SIZE;
+            for y in 0..num_tiles_y {
+                for x in 0..num_tiles_x {
+                    let tile_index = Vec2u::new(x, y);
+                    let tile_position = Vec2u::new(x*TILE_SIZE, y*TILE_SIZE);
+                    let work_tile = WorkTile::new(tile_index, tile_position, tile_size);
+                    worker_pool.process(work_tile);
                 }
             }
+        }
 
-            worker_pool.wait();
-            assert!(worker_pool.queue_len() == 0);
-
-            worker_pool.set_processor(Box::new(move |_work| {}));
-
-            Arc::try_unwrap(scene).ok().unwrap()
-        };
+        worker_pool.wait();
+        assert!(worker_pool.queue_len() == 0);
 
         let target = display.draw();
 
@@ -490,12 +481,14 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
-fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<Scene>) {
+fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: &Camera, scene: Arc<RwLock<Scene>>) {
     let camera_u = camera.projection_plane.u / backbuffer.width as f32;
     let camera_v = camera.projection_plane.v / backbuffer.height as f32;
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
     let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);
+    
+    let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
 
     for y in y0..y1 {
         for x in x0..x1 {
