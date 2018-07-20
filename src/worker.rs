@@ -73,6 +73,8 @@ impl<D: Send> WorkerPool<D> {
                         let (ref queue, ..) = *work_queue2;
                         let mut queue = queue.lock().unwrap(); // @TODO: Handle the unwrap
                         if let Some(work) = queue.pop_front() {
+                            // Not dropping the guard has the consequence to blocking parallelism altogether.
+                            drop(queue);
                             processor2(work);
                         }
                     }

@@ -195,7 +195,7 @@ fn main() {
     let scene = Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())));
 
     let worker_pool = {
-        const NUM_WORKER_THREADS: usize = 4;
+        const NUM_WORKER_THREADS: usize = 8;
         let backbuffer2 = backbuffer.clone();
         let camera = camera.clone();
         let scene2 = scene.clone();
