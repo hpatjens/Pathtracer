@@ -421,10 +421,11 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         }
     } else {
         // @TODO: Make a nice gradient for the sky of sample an equirectangular projection.
-        let theta = f32::acos(ray.direction.y);
-        let t = f32::powf(theta / PI, 2.0);
-        let intensity = 1.0 - 2.0*t;
-        intensity*Vec3::new(0.6, 0.6, 0.8)
+        let theta = f32::powf(f32::max(0.0, ray.direction.y), 1.0/5.0);
+        let radiance_upper = Vec3::new(0.41, 0.81, 1.0);
+        let radiance_lower = Vec3::new(1.0, 0.78, 0.26);
+        let radiance = mix_vec3(radiance_lower, radiance_upper, theta);
+        0.1*radiance
     }
 }
 
