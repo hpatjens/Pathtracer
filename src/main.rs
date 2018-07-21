@@ -40,13 +40,13 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
 
     {
         let material_sphere = Material::Phyiscally(PBRParameters {
-            reflectivity: Vec3::new(0.7, 0.73, 0.72),
-            roughness: 1.0,
-            metalness: 1.0,
+            reflectivity: Vec3::new(0.45, 0.05, 0.25),
+            roughness: 0.3,
+            metalness: 0.0,
         });
         let material_plane = Material::Phyiscally(PBRParameters {
-            reflectivity: Vec3::new(0.5, 0.5, 0.5),
-            roughness: 0.3,
+            reflectivity: Vec3::new(0.91, 0.92, 0.92),
+            roughness: 0.6,
             metalness: 1.0,
         });
 

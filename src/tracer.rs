@@ -33,6 +33,9 @@ pub struct Camera {
     z_near: f32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Basis(pub Vec3, pub Vec3, pub Vec3);
+
 impl Camera {
     pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Self {
         Camera {
@@ -223,7 +226,7 @@ fn refract(incoming: Vec3, normal: Vec3, n1: f32, n2: f32) -> Vec3 {
     -normal + p.normalize()*sin_theta2
 }
 
-fn construct_coordinate_system(normal: Vec3) -> (Vec3, Vec3, Vec3) {
+fn construct_coordinate_system(normal: Vec3) -> Basis {
     const EPS: f32 = 0.9999;
     let other = if normal.y > EPS || normal.y < -EPS {
         Vec3::new(1.0, 0.0, 0.0)
@@ -233,17 +236,7 @@ fn construct_coordinate_system(normal: Vec3) -> (Vec3, Vec3, Vec3) {
     let y = normal;
     let x = y.cross(other);
     let z = y.cross(x);
-    (x, y, z)
-}
-
-fn sample_hemisphere_cos(xi: Vec2) -> Vec3 {
-    let r = f32::sqrt(xi.x);
-    let theta = 2.0*PI*xi.y;
- 
-    let x = r * f32::cos(theta);
-    let z = r * f32::sin(theta);
- 
-    Vec3::new(x, f32::sqrt(f32::max(0.0, 1.0 - xi.x)), z)
+    Basis(x, y, z)
 }
 
 #[allow(dead_code)]
@@ -327,8 +320,10 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
     const R: f32 = 0.04;
     let f0 = mix_vec3(Vec3::new(R, R, R), reflectivity, metalness);
 
-    let num = normal_distribution_ggx(n, h, alpha)*geometry_smith(n, v, l, k)*fresnel_schlick(cos_theta, f0);
-    let denum = 4.0*n.dot(l)*n.dot(v);
+    // The normal distribution function is canceled out as it functions as the probability 
+    // density function for the monte carlo integration.
+    let num = /*normal_distribution_ggx(n, h, alpha)*/geometry_smith(n, v, l, k)*fresnel_schlick(cos_theta, f0);
+    let denum = 4.0*n.dot(v);
     num / denum
 }
 
@@ -345,6 +340,22 @@ fn importance_sample_ggx(xi: Vec2, roughness: f32) -> Vec3 {
     let sin_theta = f32::sqrt(1.0 - cos_theta*cos_theta);
 
     Vec3::new(sin_theta*cos_phi, cos_theta, sin_theta*sin_phi)
+}
+
+#[allow(dead_code)]
+fn importance_sample_cos(xi: Vec2) -> Vec3 {
+    let r = f32::sqrt(xi.x);
+    let theta = 2.0*PI*xi.y;
+ 
+    let x = r * f32::cos(theta);
+    let z = r * f32::sin(theta);
+ 
+    Vec3::new(x, f32::sqrt(f32::max(0.0, 1.0 - xi.x)), z)
+}
+
+pub fn to_basis(basis: Basis, v: Vec3) -> Vec3 {
+    let Basis(x, y, z) = basis;
+    x*v.x + y*v.y + z*v.z
 }
 
 fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
@@ -379,31 +390,30 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
             Material::Phyiscally(ref pbr_parameters) => {
-                let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
+                let tangent_space = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random32(), random32());
-                
+
+                // Half vector for the reflection
+                let h = to_basis(tangent_space, importance_sample_ggx(xi, pbr_parameters.roughness));
+                // The reflection direction is called light. Not to be 
+                // confused  with a ray towards a light source.
+                let light = reflect(ray.direction, h);
                 let view = -ray.direction;
                 let normal = nearest_hit.normal;
+                
+                let light_ray = Ray::new(outwards_shifted_position(), light);
+                let light_cos_theta = light.dot(normal);
 
-                let reflection_direction = {
-                    let s = sample_hemisphere_cos(xi);
-                    s.x*ax + s.y*ay + s.z*az
-                };
+                let light_radiance = trace_radiance(&light_ray, scene, depth - 1);
 
-                let light = reflection_direction;
-
-                let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction);
-                let reflection_cos_theta = reflection_direction.dot(nearest_hit.normal);
-
-                let reflection = trace_radiance(&reflection_ray, scene, depth - 1);
-
-                // Specular reflection:               
+                // Specular reflection:
+                // The cos(theta) was canceled out as it is in the denominator of the Cook-Torrance BRDF.
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
-                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*reflection_cos_theta*PI;
+                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*light_radiance*PI;
 
                 // Diffuse reflection:
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
-                let l_diff = brdf_lambert(pbr_parameters)*reflection*reflection_cos_theta*PI;
+                let l_diff = brdf_lambert(pbr_parameters)*light_radiance*light_cos_theta*PI;
 
                 // @TODO: Make this energy conserving
                 l_spec + l_diff
