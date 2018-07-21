@@ -241,7 +241,8 @@ fn sample_hemisphere_cos(xi: Vec2) -> Vec3 {
 }
 
 #[allow(dead_code)]
-fn brdf_lambert(reflectivity: Vec3) -> Vec3 {
+fn brdf_lambert(pbr_parameters: &PBRParameters) -> Vec3 {
+    let &PBRParameters{ ref reflectivity, .. } = pbr_parameters;
     reflectivity/PI
 }
 
@@ -319,7 +320,7 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
 
     const R: f32 = 0.04;
     let f0 = mix_vec3(Vec3::new(R, R, R), reflectivity, metalness);
-    
+
     let num = normal_distribution_ggx(n, h, alpha)*geometry_smith(n, v, l, k)*fresnel_schlick(cos_theta, f0);
     let denum = 4.0*n.dot(l)*n.dot(v);
     num / denum
@@ -347,6 +348,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 trace_radiance(&Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
             },
             Material::Glass => {
+                // @TODO: Here, the direction has to be taken into account (inside-out or outside-in).
                 let refraction_direction = refract(ray.direction, nearest_hit.normal, 1.0, 1.5);
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
@@ -363,17 +365,20 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
 
                 let reflection = trace_radiance(&reflection_ray, scene, depth - 1);
 
-                // @TODO: Does this have to be multiplied by PI or 2*PI?
-
-                // Diffuse reflection:
-                // brdf_lambert(*reflectivity)*reflection*cos_theta_reflection*PI
-
                 // Specular reflection:
                 let view = -ray.direction;
                 let light = reflection_direction;
                 let normal = nearest_hit.normal;
                 
-                brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*cos_theta_reflection*PI
+                // @TODO: Does this have to be multiplied by PI or 2*PI?
+                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*cos_theta_reflection*PI;
+
+                // Diffuse reflection:
+                // @TODO: Does this have to be multiplied by PI or 2*PI?
+                let l_diff = brdf_lambert(pbr_parameters)*reflection*cos_theta_reflection*PI;
+
+                // @TODO: Make this energy conserving
+                l_spec + l_diff
             },
         }
     } else {
@@ -381,7 +386,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         let theta = f32::acos(ray.direction.y);
         let t = f32::powf(theta / PI, 2.0);
         let intensity = 1.0 - 2.0*t;
-        intensity*Vec3::new(0.6, 0.6, 0.8)
+        2.0*intensity*Vec3::new(0.6, 0.6, 0.8)
     }
 }
 
