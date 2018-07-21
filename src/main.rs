@@ -14,6 +14,7 @@ mod worker;
 mod tracer;
 
 use scene::{Scene, Plane, Sphere, Material};
+use tracer::Camera;
 
 use glium::glutin::dpi::LogicalSize;
 
@@ -30,12 +31,11 @@ const GL_UNSIGNED_BYTE: i32 = 0x1401;
 fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
     {
         let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
-        *camera = {
-            let x = frame_index as f32 / 80.0;
-            const D: f32 = 20.0;
-            let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
-            tracer::look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)
-        };
+
+        let x = frame_index as f32 / 80.0;
+        const D: f32 = 20.0;
+        let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
+        camera.look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0))
     }
 
     {
@@ -89,7 +89,7 @@ fn main() {
     let backbuffer = Arc::new(tracer::Backbuffer::new(width, height));
 
     let scene = Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())));
-    let camera = Arc::new(RwLock::new(tracer::look_at(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
+    let camera = Arc::new(RwLock::new(Camera::new(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
 
     let worker_pool = {
         const NUM_WORKER_THREADS: usize = 8;

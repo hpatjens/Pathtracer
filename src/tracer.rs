@@ -20,14 +20,27 @@ pub struct Hit<'a> {
     pub material: &'a Material,
 }
 
-#[derive(Debug, new)]
+#[derive(Debug)]
 pub struct Camera {
     projection_plane: Plane,
-    eye: Vec3,
+    position: Vec3,
+    width: f32,
+    height: f32,
+    z_near: f32,
 }
 
-pub fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Camera {
-    let projection_plane = {
+impl Camera {
+    pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Self {
+        Camera {
+            projection_plane: Self::construct_projection_plane(position, target, up, width, height, z_near),
+            position: position,
+            width: width,
+            height: height,
+            z_near: z_near,
+        }
+    }
+
+    fn construct_projection_plane(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Plane {
         let z = (position - target).normalize();
         let x = up.cross(z).normalize();
         let y = z.cross(x).normalize();
@@ -42,8 +55,95 @@ pub fn look_at(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, 
         let u = x*width;
         let v = y*height;
         Plane::new(origin, u, v, Material::None)
-    };
-    Camera::new(projection_plane, position)
+    }
+
+    pub fn look_at(&mut self, position: Vec3, target: Vec3, up: Vec3) {
+        self.projection_plane = Self::construct_projection_plane(position, target, up, self.width, self.height, self.z_near);
+        self.position = position;
+    }
+
+    fn sample(&self, backbuffer_width: u32, backbuffer_height: u32) -> CameraSampler {
+        CameraSampler {
+            camera: self,
+            u: self.projection_plane.u / backbuffer_width as f32,
+            v: self.projection_plane.v / backbuffer_height as f32,
+        }
+    }
+}
+
+struct CameraSampler<'a> {
+    camera: &'a Camera,
+    u: Vec3,
+    v: Vec3,
+}
+
+// @TODO: Make a trait when more camera types are added. Different camera models can
+//        precompute different things.
+impl<'a> CameraSampler<'a> {
+    fn pinhole_ray(&self, x: u32, y: u32) -> Ray {
+        let origin = {
+            let du = x as f32*self.u;
+            let dv = y as f32*self.v;
+
+            self.camera.projection_plane.origin + du + dv
+        };
+        let direction = (origin - self.camera.position).normalize();
+        Ray::new(origin, direction)
+    }
+
+    fn thin_lens_ray(&self, x: u32, y: u32) -> Ray {
+        let Ray{ ref origin, ref direction } = self.pinhole_ray(x, y);
+
+        // In this thin-lens model a focus distance and an aperture is defined. To 
+        // determine the ray with which to sample, the point on the focus plane is
+        // computed which would be hit by the ideal ray through the pixel. Then the
+        // circle of confusion is computed which would be produced by the apterture.
+        // A point within the circle of confusion is determined randomly as the new
+        // origin point of the ray. The direction is computed by the difference of
+        // the point of the focus plane and the point within the circle of confusion
+        // on the projection plane.
+
+        const FOCUS_DISTANCE: f32 = 10.0;
+
+        // @TODO: This results in a spherical focus "plane" which is not really ideal
+        //        Use the unnormalized direction here dividing by the distance to the
+        //        projection plane to get the distance right.
+        let point_on_focus_plane = origin + FOCUS_DISTANCE*direction;
+
+        // To sample a circle correctly (with a normal distribution), the angle and
+        // radius have to be computed as follows:
+        //
+        //   alpha = 2*PI*R*sqrt(r1)
+        //   r = R*sqrt(r2)
+        //
+        // where 
+        //   R = maximum radius (circle of confusion in this case)
+        //   r1, r2 = random normally distributed numbers in the interval [0, 1]
+        //
+        // This however is not really what we want in this case as the probability
+        // of a ray hitting the sensor at a given position is not normally distributed
+        // within the circle of confusion.
+
+        const LENS_APERTURE: f32 = 4.0;
+
+        // The factor 22 means that an apterture of 22 is perfectly sharp and that 
+        // lower apertures > 0 produce larger confusion circles.
+        let circle_of_confusion = 22.0/LENS_APERTURE;
+
+        let r1 = random32();
+        let r2 = random32();
+
+        let alpha = 2.0*PI*r1;
+        let r = circle_of_confusion*r2;
+
+        let l_u = r*f32::sin(alpha);
+        let l_v = r*f32::cos(alpha);
+
+        let lens_origin = origin + l_u*self.u + l_v*self.v;
+        let lens_direction = (point_on_focus_plane - lens_origin).normalize();
+
+        Ray::new(lens_origin, lens_direction)
+    }
 }
 
 pub struct Backbuffer {
@@ -209,45 +309,18 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
     let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
     let camera = camera.read().unwrap(); // @TODO: Handle the unwrap
 
-    let camera_u = camera.projection_plane.u / backbuffer.width as f32;
-    let camera_v = camera.projection_plane.v / backbuffer.height as f32;
+    let sampler = camera.sample(backbuffer.width, backbuffer.height);
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
     let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);
 
     for y in y0..y1 {
         for x in x0..x1 {
-            let ray = {
-                let origin = {
-                    let du = x as f32*camera_u;
-                    let dv = y as f32*camera_v;
-
-                    camera.projection_plane.origin + du + dv
-                };
-                let direction = (origin - camera.eye).normalize();
-
-                // This is the ray without the lens
-                //return Ray::new(origin, direction);
-
-                {
-                    let r0 = 2.0*random32() - 1.0;
-                    let r1 = 2.0*random32() - 1.0;
-
-                    // @TODO: This should be the other way around. High apertures result in sharp images.
-                    const LENS_APERTURE: f32 = 20.0;
-                    let l_u = LENS_APERTURE*r0;
-                    let l_v = LENS_APERTURE*r1;
-
-                    // @TODO: This results in a spherical focus "plane" which is really ideal
-                    const FOCUS_DISTANCE: f32 = 10.0;
-                    let point_on_focus_plane = origin + FOCUS_DISTANCE*direction;
-
-                    let lens_origin = origin + l_u*camera_u + l_v*camera_v;
-                    let lens_direction = (point_on_focus_plane - lens_origin).normalize();
-
-                    Ray::new(lens_origin, lens_direction)
-                }
-            };
+            // Using different camera models has quite a substantial impact
+            // in performance. This might go down as the scene description
+            // gets more complicated. Test this from time to time and maybe
+            // optimze.
+            let ray = sampler.thin_lens_ray(x, y);
 
             let hdr_radiance = {
                 const N: usize = 1;
