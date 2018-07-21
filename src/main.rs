@@ -41,11 +41,11 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
     {
         let material_sphere = Material::Phyiscally(PBRParameters {
             reflectivity: Vec3::new(0.45, 0.05, 0.25),
-            roughness: 0.3,
+            roughness: 0.15,
             metalness: 0.0,
         });
         let material_plane = Material::Phyiscally(PBRParameters {
-            reflectivity: Vec3::new(0.91, 0.92, 0.92),
+            reflectivity: Vec3::new(0.91, 0.72, 0.72),
             roughness: 0.6,
             metalness: 1.0,
         });
@@ -59,9 +59,9 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
         let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
         *scene = Scene::new(
             vec![
-                Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
+                Sphere::new(light_position, 2.0, Material::Emissive(10.0*Vec3::new(1.0, 1.0, 1.0))),
                 Sphere::new(position1, 1.0, material_sphere.clone()),
-                Sphere::new(position2, 0.5, Material::Emissive(Vec3::new(0.0, 5.0, 0.0))),
+                Sphere::new(position2, 0.5, Material::Emissive(10.0*Vec3::new(0.1, 1.0, 0.0))),
                 Sphere::new(position3, 1.2, Material::Glass),
             ],
             vec![

@@ -441,6 +441,15 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
+fn gamma_correction(radiance: Vec3) -> Vec3 {
+    const GAMMA: f32 = 1.0/2.2;
+    Vec3::new(
+        f32::powf(radiance.x, GAMMA),
+        f32::powf(radiance.y, GAMMA),
+        f32::powf(radiance.z, GAMMA),
+    )
+}
+
 pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwLock<Camera>>, scene: Arc<RwLock<Scene>>) {
     let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
     let camera = camera.read().unwrap(); // @TODO: Handle the unwrap
@@ -466,8 +475,9 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
                 }
                 hdr_radiance / N as f32
             };
-            let ldr_radiance = tone_map_clamp(hdr_radiance);
-            let color = Pixel::from_unit(ldr_radiance);
+            let ldr_radiance = tone_map_reinhard(hdr_radiance);
+            let gamma_corrected = gamma_correction(ldr_radiance);
+            let color = Pixel::from_unit(gamma_corrected);
             backbuffer.set_pixel_unsafe(x, y, color);
         }
     }
