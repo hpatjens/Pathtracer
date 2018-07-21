@@ -1,6 +1,6 @@
 use common::*;
 
-use tracer::Hit;
+use tracer::{Hit, Transition};
 
 #[derive(Clone, Debug)]
 pub struct PBRParameters {
@@ -67,9 +67,14 @@ fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
     }
 
     let position = ray.origin + parameter*ray.direction;
-    let normal = (position - sphere.origin).normalize();
     let material = &sphere.material;
-    Some(Hit::new(parameter, position, normal, material))
+    let mut normal = (position - sphere.origin).normalize();
+    let mut transition = Transition::In;
+    if ray.direction.dot(normal) > 0.0 { 
+        normal = -normal;
+        transition = Transition::Out;
+    }
+    Some(Hit::new(parameter, position, normal, material, transition))
 }
 
 fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
@@ -92,10 +97,15 @@ fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
     }
 
     let position = p + parameter*d;
-    let normal = n;
     let material = &plane.material;
+    let (transition, normal) = if ray.direction.dot(n) < 0.0 { 
+        (Transition::In, n)
+    } else { 
+        (Transition::Out, -n)
+    };
 
-    Some(Hit::new(parameter, position, normal, material))
+
+    Some(Hit::new(parameter, position, normal, material, transition))
 }
 
 pub fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {

@@ -12,12 +12,16 @@ pub struct WorkTile {
     pub size: Vec2u,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Transition { In, Out }
+
 #[derive(Debug, Clone, new)]
 pub struct Hit<'a> {
     pub parameter: f32,
     pub position: Vec3,
     pub normal: Vec3,
     pub material: &'a Material,
+    pub transition: Transition,
 }
 
 #[derive(Debug)]
@@ -336,7 +340,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     let nearest_hit = find_scene_hit(ray, scene);
 
     if let Some(nearest_hit) = nearest_hit {
-        const SHIFT_AMOUNT: f32 = 0.0001; // @TODO: Find a good factor and maybe make it dependent on the slope
+        const SHIFT_AMOUNT: f32 = 0.000001; // @TODO: Find a good factor and maybe make it dependent on the slope
         let outwards_shifted_position = ||{ nearest_hit.position + SHIFT_AMOUNT*nearest_hit.normal };
         let inwards_shifted_position  = ||{ nearest_hit.position - SHIFT_AMOUNT*nearest_hit.normal };
 
@@ -348,8 +352,13 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 trace_radiance(&Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
             },
             Material::Glass => {
-                // @TODO: Here, the direction has to be taken into account (inside-out or outside-in).
-                let refraction_direction = refract(ray.direction, nearest_hit.normal, 1.0, 1.5);
+                const IOR_AIR: f32 = 1.0;
+                const IOR_GLASS: f32 = 1.5;
+                let (n1, n2) = match nearest_hit.transition {
+                    Transition::In  => (IOR_AIR, IOR_GLASS),
+                    Transition::Out => (IOR_GLASS, IOR_AIR),
+                };
+                let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
             Material::Phyiscally(ref pbr_parameters) => {
@@ -360,8 +369,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 //        dark with low roughness values.
                 let reflection_direction = h.x*ax + h.y*ay + h.z*az;
                 let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction);
-
-                let cos_theta_reflection = reflection_direction.dot(nearest_hit.normal);
+                let reflection_cos_theta = reflection_direction.dot(nearest_hit.normal);
 
                 let reflection = trace_radiance(&reflection_ray, scene, depth - 1);
 
@@ -371,11 +379,11 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let normal = nearest_hit.normal;
                 
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
-                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*cos_theta_reflection*PI;
+                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*reflection_cos_theta*PI;
 
                 // Diffuse reflection:
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
-                let l_diff = brdf_lambert(pbr_parameters)*reflection*cos_theta_reflection*PI;
+                let l_diff = brdf_lambert(pbr_parameters)*reflection*reflection_cos_theta*PI;
 
                 // @TODO: Make this energy conserving
                 l_spec + l_diff
