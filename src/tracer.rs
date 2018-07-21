@@ -84,6 +84,7 @@ struct CameraSampler<'a> {
 // @TODO: Make a trait when more camera types are added. Different camera models can
 //        precompute different things.
 impl<'a> CameraSampler<'a> {
+    #[allow(dead_code)]
     fn pinhole_ray(&self, x: u32, y: u32) -> Ray {
         let origin = {
             let du = x as f32*self.u;
@@ -95,6 +96,7 @@ impl<'a> CameraSampler<'a> {
         Ray::new(origin, direction)
     }
 
+    #[allow(dead_code)]
     fn thin_lens_ray(&self, x: u32, y: u32) -> Ray {
         let Ray{ ref origin, ref direction } = self.pinhole_ray(x, y);
 
@@ -330,6 +332,21 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
     num / denum
 }
 
+// @TODO: Ensure that the reflection direction is not below the horizon.
+#[allow(dead_code)]
+fn importance_sample_ggx(xi: Vec2, roughness: f32) -> Vec3 {
+    let a = roughness*roughness;
+
+    let phi = 2.0*PI*xi.x;
+    let sin_phi = f32::sin(phi);
+    let cos_phi = f32::cos(phi);
+
+    let cos_theta = f32::sqrt((1.0 - xi.y) / (xi.y*(a*a - 1.0) + 1.0));
+    let sin_theta = f32::sqrt(1.0 - cos_theta*cos_theta);
+
+    Vec3::new(sin_theta*cos_phi, cos_theta, sin_theta*sin_phi)
+}
+
 fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     // @TODO: Find all the places where NANs can be generated and fix as many as it makes sense.
 
@@ -364,20 +381,23 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
             Material::Phyiscally(ref pbr_parameters) => {
                 let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random32(), random32());
-                let h = sample_hemisphere_cos(xi);
-                // @TODO: Here, importance sampling is needed. Otherwise the reflection becomes really 
-                //        dark with low roughness values.
-                let reflection_direction = h.x*ax + h.y*ay + h.z*az;
+                
+                let view = -ray.direction;
+                let normal = nearest_hit.normal;
+
+                let reflection_direction = {
+                    let s = sample_hemisphere_cos(xi);
+                    s.x*ax + s.y*ay + s.z*az
+                };
+
+                let light = reflection_direction;
+
                 let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction);
                 let reflection_cos_theta = reflection_direction.dot(nearest_hit.normal);
 
                 let reflection = trace_radiance(&reflection_ray, scene, depth - 1);
 
-                // Specular reflection:
-                let view = -ray.direction;
-                let light = reflection_direction;
-                let normal = nearest_hit.normal;
-                
+                // Specular reflection:               
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
                 let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*reflection_cos_theta*PI;
 
@@ -394,7 +414,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         let theta = f32::acos(ray.direction.y);
         let t = f32::powf(theta / PI, 2.0);
         let intensity = 1.0 - 2.0*t;
-        2.0*intensity*Vec3::new(0.6, 0.6, 0.8)
+        intensity*Vec3::new(0.6, 0.6, 0.8)
     }
 }
 
@@ -426,7 +446,7 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
             // in performance. This might go down as the scene description
             // gets more complicated. Test this from time to time and maybe
             // optimze.
-            let ray = sampler.thin_lens_ray(x, y);
+            let ray = sampler.pinhole_ray(x, y);
 
             let hdr_radiance = {
                 const N: usize = 1;

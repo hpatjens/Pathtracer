@@ -33,7 +33,7 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
         let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
 
         let x = frame_index as f32 / 80.0;
-        const D: f32 = 20.0;
+        const D: f32 = 25.0;
         let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
         camera.look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0))
     }
@@ -46,7 +46,7 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
         });
         let material_plane = Material::Phyiscally(PBRParameters {
             reflectivity: Vec3::new(0.5, 0.5, 0.5),
-            roughness: 0.05,
+            roughness: 0.3,
             metalness: 1.0,
         });
 
@@ -59,7 +59,7 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
         let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
         *scene = Scene::new(
             vec![
-                Sphere::new(light_position, 2.0, Material::Emissive(3.0*Vec3::new(1.0, 1.0, 1.0))),
+                Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
                 Sphere::new(position1, 1.0, material_sphere.clone()),
                 Sphere::new(position2, 0.5, Material::Emissive(Vec3::new(0.0, 5.0, 0.0))),
                 Sphere::new(position3, 1.2, Material::Glass),
