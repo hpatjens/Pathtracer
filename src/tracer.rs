@@ -1,6 +1,6 @@
 use common::*;
 
-use scene::{Scene, Plane, Material, find_scene_hit};
+use scene::{Scene, Plane, PBRParameters, Material, find_scene_hit};
 
 use std::sync::{Arc, RwLock};
 use std::cell::UnsafeCell;
@@ -240,8 +240,89 @@ fn sample_hemisphere_cos(xi: Vec2) -> Vec3 {
     Vec3::new(x, f32::sqrt(f32::max(0.0, 1.0 - xi.x)), z)
 }
 
-fn brdf_lambert(reflectivity: Vec3, radiance: Vec3) -> Vec3 {
-    reflectivity*radiance
+#[allow(dead_code)]
+fn brdf_lambert(reflectivity: Vec3) -> Vec3 {
+    reflectivity/PI
+}
+
+fn normal_distribution_ggx(normal: Vec3, half: Vec3, alpha: f32) -> f32 {
+    // The normal distribution function computes how much the microfacets of the surface
+    // contribute to a reflection whose half vector is 'half'.
+    
+    // More in-depth explanation: The microfacet theory assumes that the relevant reflection 
+    // characteristics of every surface can be modelled by an in infinite amount of
+    // infinitesimal small mirrors where the orientation and visibility of these mirrors are 
+    // only defined statistically. The normal distribution function represents the statistical
+    // orientation of the microfacets in the sense that it returns the probability of a
+    // microfacet being oriented in the 'half' direction. Alternatively this can be seen as
+    // determining the surface area of the microfacets being oriented in the half direction
+    // relativ to the surface area of the macro surface. Therefore, when the intensity of
+    // a reflection from direction d_1 to direction d_2 has to be determined, the half vector
+    // between both directions can be determined and the normal distribution function returns
+    // the strength of the reflection as those microfacets oriented in the 'half' direction
+    // contribute to exactly that reflection.
+
+    let n = normal; // normal of the surface
+    let h = half; // half vector (normal of microfacets that contribute to the reflection)
+    let a = alpha; // alpha value that is based on the roughness of the surface (e.g. roughness^2)
+
+    let a2 = a*a;
+    let n_dot_h = f32::max(n.dot(h), 0.0);
+    let n_dot_h2 = n_dot_h*n_dot_h;
+
+    let d = n_dot_h2 * (a2 - 1.0) + 1.0;
+	
+    a2 / (PI*d*d)
+}
+
+fn geometry_smith(normal: Vec3, view: Vec3, light: Vec3, k: f32) -> f32 {
+    // This function computes the probability of light being blocked either by 
+    //   1. the microfacet being shadowed by another microfacet when the light is incoming or
+    //   2. the microfacet being masked by another microfacet when the light is outgoing.
+    // Another way to lock at is would be: This function reduces the amount of reflected energy
+    // by considering the proportional surface area of microfacets that is shadowed or masked
+    // by other microfacets relativ to the surface area of the macro surface.
+
+    let n = normal; // normal of the surface
+    let v = view; // direction to the viewer
+    let l = light; // direction to the light source
+
+    let geometry_schlick_ggx = |a: Vec3| -> f32 {
+        let n_dot_a = f32::max(0.0, n.dot(a));
+        let nom = n_dot_a;
+        let denom = n_dot_a * (1.0 - k) + k;
+        nom / denom
+    };
+    geometry_schlick_ggx(l)*geometry_schlick_ggx(v)
+}
+
+fn fresnel_schlick(cos_theta: f32, f0: Vec3) -> Vec3 {
+    f0 + (Vec3::one() - f0)*f32::powf(1.0 - cos_theta, 5.0)
+}
+
+fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PBRParameters) -> Vec3 {
+    // Bear in mind that 'view' as well as 'light' are pointing away from the surface!
+
+    let v = view;
+    let l = light;
+    let n = normal;
+
+    let &PBRParameters{ reflectivity, roughness, metalness } = pbr_parameters;
+
+    let alpha = roughness*roughness;
+    let h = (v + l).normalize();
+    let cos_theta = h.dot(v);
+
+    // @TODO: There are multiple definitions for this. What's the best?
+    // let k = (alpha + 1.0)*(alpha + 1.0) / 8.0;
+    let k = alpha / 2.0; // Was/is used in the Unreal Engine 4 according to Brian Karis' blog.
+
+    const R: f32 = 0.04;
+    let f0 = mix_vec3(Vec3::new(R, R, R), reflectivity, metalness);
+    
+    let num = normal_distribution_ggx(n, h, alpha)*geometry_smith(n, v, l, k)*fresnel_schlick(cos_theta, f0);
+    let denum = 4.0*n.dot(l)*n.dot(v);
+    num / denum
 }
 
 fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
@@ -269,18 +350,30 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let refraction_direction = refract(ray.direction, nearest_hit.normal, 1.0, 1.5);
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
-            Material::Phyiscally{ ref reflectivity, .. } => {
+            Material::Phyiscally(ref pbr_parameters) => {
                 let (ax, ay, az) = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random32(), random32());
                 let h = sample_hemisphere_cos(xi);
-                let direction = h.x*ax + h.y*ay + h.z*az;
-                let ray = Ray::new(outwards_shifted_position(), direction);
+                // @TODO: Here, importance sampling is needed. Otherwise the reflection becomes really 
+                //        dark with low roughness values.
+                let reflection_direction = h.x*ax + h.y*ay + h.z*az;
+                let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction);
 
-                let cos_theta_reflection = direction.dot(nearest_hit.normal);
+                let cos_theta_reflection = reflection_direction.dot(nearest_hit.normal);
 
-                let reflection = trace_radiance(&ray, scene, depth - 1);
+                let reflection = trace_radiance(&reflection_ray, scene, depth - 1);
 
-                brdf_lambert(*reflectivity, reflection)*cos_theta_reflection*PI
+                // @TODO: Does this have to be multiplied by PI or 2*PI?
+
+                // Diffuse reflection:
+                // brdf_lambert(*reflectivity)*reflection*cos_theta_reflection*PI
+
+                // Specular reflection:
+                let view = -ray.direction;
+                let light = reflection_direction;
+                let normal = nearest_hit.normal;
+                
+                brdf_cook_torrance(view, light, normal, pbr_parameters)*reflection*cos_theta_reflection*PI
             },
         }
     } else {

@@ -13,7 +13,7 @@ mod scene;
 mod worker;
 mod tracer;
 
-use scene::{Scene, Plane, Sphere, Material};
+use scene::{Scene, Plane, Sphere, PBRParameters, Material};
 use tracer::Camera;
 
 use glium::glutin::dpi::LogicalSize;
@@ -39,16 +39,16 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
     }
 
     {
-        let material1 = Material::Phyiscally{
+        let material_sphere = Material::Phyiscally(PBRParameters {
             reflectivity: Vec3::new(0.7, 0.73, 0.72),
-            roughness: 1.0,
-            metalness: 0.0,
-        };
-        let material2 = Material::Phyiscally{
+            roughness: 0.2,
+            metalness: 1.0,
+        });
+        let material_plane = Material::Phyiscally(PBRParameters {
             reflectivity: Vec3::new(0.5, 0.5, 0.5),
             roughness: 1.0,
-            metalness: 0.0,
-        };
+            metalness: 1.0,
+        });
 
         let x = frame_index as f32 / 40.0;
         let position1 = Vec3::new(2.3*f32::sin(x), f32::cos(x), 2.1*f32::cos(x));
@@ -60,12 +60,12 @@ fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, fram
         *scene = Scene::new(
             vec![
                 Sphere::new(light_position, 2.0, Material::Emissive(Vec3::new(1.0, 1.0, 1.0))),
-                Sphere::new(position1, 1.0, material1.clone()),
+                Sphere::new(position1, 1.0, material_sphere.clone()),
                 Sphere::new(position2, 0.5, Material::Emissive(Vec3::new(0.0, 5.0, 0.0))),
                 Sphere::new(position3, 1.2, Material::Glass),
             ],
             vec![
-                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material2.clone())
+                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material_plane.clone())
             ]
         )
     }

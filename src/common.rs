@@ -45,6 +45,10 @@ pub fn saturatef32(x: f32) -> f32 {
     clampf32(0.0, 1.0, x)
 }
 
+pub fn mix_vec3(a: Vec3, b: Vec3, x: f32) -> Vec3 {
+    (1.0 - x)*a + x*b
+}
+
 #[derive(Clone)]
 pub struct Pixel(pub u8, pub u8, pub u8);
 

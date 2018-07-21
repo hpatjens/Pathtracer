@@ -3,17 +3,20 @@ use common::*;
 use tracer::Hit;
 
 #[derive(Clone, Debug)]
+pub struct PBRParameters {
+    pub reflectivity: Vec3,
+    pub roughness: f32,
+    pub metalness: f32,
+}
+
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum Material {
     None,
     Emissive(Vec3),
     Mirror,
     Glass,
-    Phyiscally {
-        reflectivity: Vec3,
-        roughness: f32,
-        metalness: f32,
-    },
+    Phyiscally(PBRParameters),
 }
 
 // @TODO: Don't use this plane in the camera
