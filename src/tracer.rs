@@ -301,7 +301,7 @@ fn fresnel_schlick(cos_theta: f32, f0: Vec3) -> Vec3 {
     f0 + (Vec3::one() - f0)*f32::powf(1.0 - cos_theta, 5.0)
 }
 
-fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PBRParameters) -> Vec3 {
+fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PBRParameters) -> (Vec3, Vec3) {
     // Bear in mind that 'view' as well as 'light' are pointing away from the surface!
 
     let v = view;
@@ -323,9 +323,11 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
 
     // The normal distribution function is canceled out as it functions as the probability 
     // density function for the monte carlo integration.
-    let num = /*normal_distribution_ggx(n, h, alpha)*/geometry_smith(n, v, l, k)*fresnel_schlick(cos_theta, f0);
+    let fresnel = fresnel_schlick(cos_theta, f0);
+    let geometry = geometry_smith(n, v, l, k);
+    let num = geometry*fresnel;
     let denum = 4.0*n.dot(v);
-    num / denum
+    (num / denum, fresnel)
 }
 
 // @TODO: Ensure that the reflection direction is not below the horizon.
@@ -410,14 +412,17 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 // Specular reflection:
                 // The cos(theta) was canceled out as it is in the denominator of the Cook-Torrance BRDF.
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
-                let l_spec = brdf_cook_torrance(view, light, normal, pbr_parameters)*light_radiance*PI;
+                let (f_r, k_spec) = brdf_cook_torrance(view, light, normal, pbr_parameters);
+                let k_diff = Vec3::one() - k_spec;
+
+                let l_spec = f_r*light_radiance*PI;
 
                 // Diffuse reflection:
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
                 let l_diff = brdf_lambert(pbr_parameters)*light_radiance*light_cos_theta*PI;
 
                 // @TODO: Make this energy conserving
-                l_spec + l_diff
+                k_spec*l_spec + k_diff*l_diff
             },
         }
     } else {

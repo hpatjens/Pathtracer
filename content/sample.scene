@@ -4,13 +4,13 @@ plane {
     v = (0.0, 0.0, -1.0)
     material = physically {
         reflectivity = (0.27, 0.87, 0.97)
-        roughness = 0.0
-        metalness = 1.0
+        roughness = 0.4
+        metalness = 0.0
     }
 }
 
 sphere {
-    origin = (1.0, 0.5, 2.0)
+    origin = (1.0, 0.35, 2.0)
     radius = 1.32
     material = physically {
         reflectivity = (0.98, 0.96, 0.91)
@@ -20,17 +20,17 @@ sphere {
 }
 
 sphere {
-    origin = (-1.0, 1.2, 1.0)
-    radius = 0.8
+    origin = (-1.5, 1.2, -0.5)
+    radius = 1.8
     material = physically {
         reflectivity = (0.97, 0.0, 0.0)
-        roughness = 0.1
-        metalness = 1.0
+        roughness = 0.6
+        metalness = 0.0
     }
 }
 
 sphere {
-    origin = (0.0, 2.5, 0.0)
+    origin = (1.5, 2.5, -1.0)
     radius = 0.9
     material = physically {
         reflectivity = (0.27, 0.87, 0.97)
