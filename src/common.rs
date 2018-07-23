@@ -31,6 +31,7 @@ pub fn random32() -> f32 {
     r as f32 / std::u32::MAX as f32
 }
 
+#[allow(dead_code)]
 pub fn clampf32(min: f32, max: f32, x: f32) -> f32 {
     if x > max {
         max
@@ -41,6 +42,7 @@ pub fn clampf32(min: f32, max: f32, x: f32) -> f32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn saturatef32(x: f32) -> f32 {
     clampf32(0.0, 1.0, x)
 }

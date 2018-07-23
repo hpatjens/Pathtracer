@@ -5,6 +5,7 @@ extern crate glutin;
 extern crate hmath;
 extern crate rand;
 extern crate time;
+extern crate notify;
 
 mod common;
 use common::*;
@@ -12,13 +13,19 @@ use common::*;
 mod scene;
 mod worker;
 mod tracer;
+mod parser;
 
-use scene::{Scene, Plane, Sphere, PBRParameters, Material};
+use scene::Scene;
 use tracer::Camera;
 
 use glium::glutin::dpi::LogicalSize;
+use notify::Watcher;
 
+use std::time::Duration;
+use std::io::prelude::*;
+use std::fs::File;
 use std::sync::{Arc, RwLock};
+use std::sync::mpsc::channel;
 
 #[link(name = "opengl32")]
 extern "C" {
@@ -28,50 +35,40 @@ extern "C" {
 const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
 
-fn update(scene: &Arc<RwLock<Scene>>, camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
-    {
-        let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
+fn update(camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
+    let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
 
-        let x = frame_index as f32 / 80.0;
-        const D: f32 = 25.0;
-        let position = Vec3::new(D*f32::cos(x), 2.0 + f32::cos(x), D*f32::sin(x));
-        camera.look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0))
-    }
+    let x = frame_index as f32 / 80.0;
+    const D: f32 = 25.0;
+    let position = Vec3::new(D*f32::cos(x), 2.0, D*f32::sin(x));
+    camera.look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0))
+}
 
-    {
-        let material_sphere = Material::Phyiscally(PBRParameters {
-            reflectivity: Vec3::new(0.45, 0.05, 0.25),
-            roughness: 0.15,
-            metalness: 0.0,
-        });
-        let material_plane = Material::Phyiscally(PBRParameters {
-            reflectivity: Vec3::new(0.91, 0.72, 0.72),
-            roughness: 0.6,
-            metalness: 1.0,
-        });
-
-        let x = frame_index as f32 / 40.0;
-        let position1 = Vec3::new(2.3*f32::sin(x), f32::cos(x), 2.1*f32::cos(x));
-        let position2 = Vec3::new(1.2*f32::sin(1.12*x + 0.124), f32::cos(1.45*x + 0.7567), 1.6*f32::cos(0.923*x + 0.2345));
-        let position3 = Vec3::new(f32::sin(1.43*x + 0.224), f32::cos(1.76*x + 0.2134), f32::cos(0.123*x + 0.6346));
-        let light_position = Vec3::new(0.0, 3.5, -1.0);
-
-        let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
-        *scene = Scene::new(
-            vec![
-                Sphere::new(light_position, 2.0, Material::Emissive(10.0*Vec3::new(1.0, 1.0, 1.0))),
-                Sphere::new(position1, 1.0, material_sphere.clone()),
-                Sphere::new(position2, 0.5, Material::Emissive(10.0*Vec3::new(0.1, 1.0, 0.0))),
-                Sphere::new(position3, 1.2, Material::Glass),
-            ],
-            vec![
-                Plane::new(Vec3::new(0.0, -2.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 0.0, -1.0), material_plane.clone())
-            ]
-        )
-    }
+fn load_scene(filename: &str) -> Result<Scene, parser::ParseError> {
+    let content = {
+        let mut content = String::new();
+        let mut file = File::open(filename).expect("File not found.");
+        file.read_to_string(&mut content).expect("Could not read the file.");
+        content
+    };
+    parser::parse_scene(&*content)
 }
 
 fn main() {
+    let (sender, receiver) = channel();
+
+    // @TODO: Search for a file in the current folder and add a command line argument.
+    const SCENE_FILENAME: &str = "content/sample.scene";
+
+    let mut watcher: notify::RecommendedWatcher = match notify::Watcher::new(sender, Duration::from_millis(1000)) {
+        Ok(watcher) => watcher,
+        Err(_) => panic!("Could not create the watcher for the scene file."),
+    };
+    match watcher.watch(SCENE_FILENAME, notify::RecursiveMode::NonRecursive) {
+        Ok(_) => (),
+        Err(_) => panic!("Could not start the watcher for the scene file."),
+    };
+
     let width: u32 = 512;
     let height: u32 = 512;
 
@@ -88,7 +85,13 @@ fn main() {
 
     let backbuffer = Arc::new(tracer::Backbuffer::new(width, height));
 
-    let scene = Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())));
+    let scene = match load_scene(SCENE_FILENAME) {
+        Ok(scene) => Arc::new(RwLock::new(scene)),
+        Err(err) => {
+            println!("Could not load the scene. Error: {:?}", err);
+            Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())))
+        },
+    };
     let camera = Arc::new(RwLock::new(Camera::new(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
 
     let worker_pool = {
@@ -105,7 +108,20 @@ fn main() {
     while running {
         let frame_time_start = time::precise_time_ns();
 
-        update(&scene, &camera, frame_index);
+        match receiver.try_recv() {
+            Ok(_) => {
+                let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
+                match load_scene(SCENE_FILENAME) {
+                    Ok(loaded_scene) => *scene = loaded_scene,
+                    Err(err) => {
+                        println!("Could not load the scene. Error: {:?}", err);
+                    },
+                };
+            },
+            Err(_) => (), // @TODO: If disconnected panic
+        }
+
+        update(&camera, frame_index);
 
         for _ in 0..1 {
             const TILE_SIZE: u32 = 32;

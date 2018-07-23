@@ -245,6 +245,7 @@ fn brdf_lambert(pbr_parameters: &PBRParameters) -> Vec3 {
     reflectivity/PI
 }
 
+#[allow(dead_code)]
 fn normal_distribution_ggx(normal: Vec3, half: Vec3, alpha: f32) -> f32 {
     // The normal distribution function computes how much the microfacets of the surface
     // contribute to a reflection whose half vector is 'half'.
@@ -389,7 +390,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
-            Material::Phyiscally(ref pbr_parameters) => {
+            Material::Physically(ref pbr_parameters) => {
                 let tangent_space = construct_coordinate_system(nearest_hit.normal);
                 let xi = Vec2::new(random32(), random32());
 
@@ -434,6 +435,7 @@ fn tone_map_reinhard(radiance: Vec3) -> Vec3 {
     radiance / (Vec3::one() + radiance)
 }
 
+#[allow(dead_code)]
 fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     Vec3::new(
         saturatef32(radiance.x),

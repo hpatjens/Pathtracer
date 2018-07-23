@@ -16,7 +16,7 @@ pub enum Material {
     Emissive(Vec3),
     Mirror,
     Glass,
-    Phyiscally(PBRParameters),
+    Physically(PBRParameters),
 }
 
 // @TODO: Don't use this plane in the camera
