@@ -30,11 +30,9 @@ sphere {
 }
 
 sphere {
-    origin = (1.5, 2.5, -1.0)
-    radius = 0.9
-    material = physically {
-        reflectivity = (0.27, 0.87, 0.97)
-        roughness = 0.2
-        metalness = 1.0
+    origin = (1.5, 2.0, -1.0)
+    radius = 0.5
+    material = emissive {
+        radiance = (20.0, 20.0, 10.0)
     }
 }

@@ -95,10 +95,14 @@ fn parse_whitespace_and_vec3<'a>(context: &ParseContext<'a>) -> ParseResult<'a, 
     success(Vec3::new(x, y, z), context)
 }
 
-enum MaterialType { Physically }
+enum MaterialType { Physically, Emissive }
 fn parse_whitespace_and_material_type<'a>(context: &ParseContext<'a>) -> ParseResult<'a, MaterialType> {
     if let Ok((_, context)) = parse_whitespace_and_string(&context, "physically") {
         return success(MaterialType::Physically, context);
+    }
+
+    if let Ok((_, context)) = parse_whitespace_and_string(&context, "emissive") {
+        return success(MaterialType::Emissive, context);
     }
 
     // @TODO: Add a default material for quickly setting up a scene.
@@ -137,11 +141,24 @@ fn parse_whitespace_and_physically_material<'a>(context: &ParseContext<'a>) -> P
     success(Material::Physically(pbr_parameters), context)
 }
 
+fn parse_whitespace_and_emissive_material<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Material> {
+    let (_, context) = parse_whitespace_and_string(&context, "{")?;
+
+    let (_       , context) = parse_whitespace_and_string(&context, "radiance")?;
+    let (_       , context) = parse_whitespace_and_string(&context, "=")?;
+    let (radiance, context) = parse_whitespace_and_vec3(&context)?;
+
+    let (_       , context) = parse_whitespace_and_string(&context, "}")?;
+
+    success(Material::Emissive(radiance), context)
+}
+
 fn parse_whitespace_and_material<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Material> {
     let (material_type, context) = parse_whitespace_and_material_type(&context)?;
 
     match material_type {
         MaterialType::Physically => parse_whitespace_and_physically_material(&context),
+        MaterialType::Emissive => parse_whitespace_and_emissive_material(&context),
     }
 }
 
