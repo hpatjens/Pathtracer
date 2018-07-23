@@ -4,7 +4,7 @@ plane {
     v = (0.0, 0.0, -1.0)
     material = physically {
         reflectivity = (0.27, 0.87, 0.97)
-        roughness = 0.4
+        roughness = 1.0
         metalness = 0.0
     }
 }
@@ -12,10 +12,8 @@ plane {
 sphere {
     origin = (1.0, 0.35, 2.0)
     radius = 1.32
-    material = physically {
-        reflectivity = (0.98, 0.96, 0.91)
-        roughness = 0.09
-        metalness = 0.0
+    material = translucent {
+        ior = 1.5
     }
 }
 
@@ -31,8 +29,18 @@ sphere {
 
 sphere {
     origin = (1.5, 2.0, -1.0)
-    radius = 0.5
+    radius = 1.2
     material = emissive {
         radiance = (20.0, 20.0, 10.0)
+    }
+}
+
+sphere {
+    origin = (2.5, 0.2, -2.0)
+    radius = 0.8
+    material = physically {
+        reflectivity = (0.98, 0.96, 0.91)
+        roughness = 0.09
+        metalness = 0.0
     }
 }

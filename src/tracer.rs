@@ -204,10 +204,14 @@ fn reflect(incoming: Vec3, normal: Vec3) -> Vec3 {
 fn refract(incoming: Vec3, normal: Vec3, n1: f32, n2: f32) -> Vec3 {
     // Bear in mind that incoming is directed at the surface!
 
+    let v = -incoming;
+    let n = normal;
+
     // Pythagorean trigonometric identity: sin^2(a) + cos^2(a) = 1
     // Since cos(a) is easy to compute, sin(a) can be computed by
     // sin(a) = sqrt(1 - cos^2(a))
-    let cos_theta1 = -incoming.dot(normal);
+    let cos_theta1 = v.dot(n);
+
     // @TODO: Test whether this is really faster.
     // @TODO: Implement a faster but worse sqrt.
     // Look at this article: https://www.codeproject.com/Articles/69941/Best-Square-Root-Method-Algorithm-Function-Precisi
@@ -219,11 +223,12 @@ fn refract(incoming: Vec3, normal: Vec3, n1: f32, n2: f32) -> Vec3 {
     //       n1: index of refraction for the medium above the surface
     //       n2: index of refraction for the medium below the surface
     let sin_theta2 = (sin_theta1*n1)/n2;
+    let cos_theta2 = f32::sqrt(1.0 - sin_theta2*sin_theta2);
     
     // Corresponds to the projection of 'incoming' onto the ground plane.
     let p = incoming + cos_theta1*normal;
     
-    -normal + p.normalize()*sin_theta2
+    -normal*cos_theta2 + p.normalize()*sin_theta2
 }
 
 fn construct_coordinate_system(normal: Vec3) -> Basis {
@@ -371,7 +376,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     let nearest_hit = find_scene_hit(ray, scene);
 
     if let Some(nearest_hit) = nearest_hit {
-        const SHIFT_AMOUNT: f32 = 0.000001; // @TODO: Find a good factor and maybe make it dependent on the slope
+        const SHIFT_AMOUNT: f32 = 0.0001; // @TODO: Find a good factor and maybe make it dependent on the slope
         let outwards_shifted_position = ||{ nearest_hit.position + SHIFT_AMOUNT*nearest_hit.normal };
         let inwards_shifted_position  = ||{ nearest_hit.position - SHIFT_AMOUNT*nearest_hit.normal };
 
@@ -382,12 +387,11 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let reflection_direction = reflect(ray.direction, nearest_hit.normal);
                 trace_radiance(&Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
             },
-            Material::Glass => {
+            Material::Translucent(ior) => {
                 const IOR_AIR: f32 = 1.0;
-                const IOR_GLASS: f32 = 1.5;
                 let (n1, n2) = match nearest_hit.transition {
-                    Transition::In  => (IOR_AIR, IOR_GLASS),
-                    Transition::Out => (IOR_GLASS, IOR_AIR),
+                    Transition::In  => (IOR_AIR, *ior),
+                    Transition::Out => (*ior, IOR_AIR),
                 };
                 let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);
                 trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)

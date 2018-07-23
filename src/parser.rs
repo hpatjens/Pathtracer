@@ -95,7 +95,7 @@ fn parse_whitespace_and_vec3<'a>(context: &ParseContext<'a>) -> ParseResult<'a, 
     success(Vec3::new(x, y, z), context)
 }
 
-enum MaterialType { Physically, Emissive }
+enum MaterialType { Physically, Emissive, Translucent }
 fn parse_whitespace_and_material_type<'a>(context: &ParseContext<'a>) -> ParseResult<'a, MaterialType> {
     if let Ok((_, context)) = parse_whitespace_and_string(&context, "physically") {
         return success(MaterialType::Physically, context);
@@ -103,6 +103,10 @@ fn parse_whitespace_and_material_type<'a>(context: &ParseContext<'a>) -> ParseRe
 
     if let Ok((_, context)) = parse_whitespace_and_string(&context, "emissive") {
         return success(MaterialType::Emissive, context);
+    }
+
+    if let Ok((_, context)) = parse_whitespace_and_string(&context, "translucent") {
+        return success(MaterialType::Translucent, context);
     }
 
     // @TODO: Add a default material for quickly setting up a scene.
@@ -153,12 +157,25 @@ fn parse_whitespace_and_emissive_material<'a>(context: &ParseContext<'a>) -> Par
     success(Material::Emissive(radiance), context)
 }
 
+fn parse_whitespace_and_translucent_material<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Material> {
+    let (_, context) = parse_whitespace_and_string(&context, "{")?;
+
+    let (_  , context) = parse_whitespace_and_string(&context, "ior")?;
+    let (_  , context) = parse_whitespace_and_string(&context, "=")?;
+    let (ior, context) = parse_whitespace_and_f32(&context)?;
+
+    let (_  , context) = parse_whitespace_and_string(&context, "}")?;
+
+    success(Material::Translucent(ior), context)
+}
+
 fn parse_whitespace_and_material<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Material> {
     let (material_type, context) = parse_whitespace_and_material_type(&context)?;
 
     match material_type {
         MaterialType::Physically => parse_whitespace_and_physically_material(&context),
         MaterialType::Emissive => parse_whitespace_and_emissive_material(&context),
+        MaterialType::Translucent => parse_whitespace_and_translucent_material(&context),
     }
 }
 

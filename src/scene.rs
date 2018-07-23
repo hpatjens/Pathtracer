@@ -15,7 +15,7 @@ pub enum Material {
     None,
     Emissive(Vec3),
     Mirror,
-    Glass,
+    Translucent(f32),
     Physically(PBRParameters),
 }
 
