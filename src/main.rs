@@ -170,13 +170,15 @@ fn main() {
         let target = display.draw();
 
         unsafe {
-            let raw = &(*backbuffer.pixels.get())[0].0 as *const u8;
+            let raw = &(*backbuffer.pixels8.get())[0].0 as *const u8;
             glDrawPixels(backbuffer.width,
                          backbuffer.height,
                          GL_RGB,
                          GL_UNSIGNED_BYTE,
                          raw);
+            *backbuffer.num_samples.get() += 1;
         };
+
 
         target.finish().unwrap();
 

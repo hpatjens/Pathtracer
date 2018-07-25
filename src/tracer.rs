@@ -3,6 +3,7 @@ use common::*;
 use scene::{Scene, Sky, Plane, PBRParameters, Material, find_scene_hit};
 
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicBool;
 use std::cell::UnsafeCell;
 
 #[derive(Clone, Debug, new)]
@@ -96,8 +97,11 @@ impl<'a> CameraSampler<'a> {
     #[allow(dead_code)]
     fn pinhole_ray(&self, x: u32, y: u32) -> Ray {
         let origin = {
-            let du = x as f32*self.u;
-            let dv = y as f32*self.v;
+            let ru = random32();
+            let rv = random32();
+
+            let du = (x as f32 + ru)*self.u;
+            let dv = (y as f32 + rv)*self.v;
 
             self.camera.projection_plane.origin + du + dv
         };
@@ -174,7 +178,9 @@ pub struct Backbuffer {
     // This however would add a lot of bookkeeping to pass the right references to the 
     // workers that process the respective tile. Consider that one worker needs multiple
     // references to the individual lines of the tile!
-    pub pixels: UnsafeCell<Vec<Pixel>>,
+    pub num_samples: UnsafeCell<usize>,
+    pub pixels32: UnsafeCell<Vec<Pixel32>>,
+    pub pixels8: UnsafeCell<Vec<Pixel8>>,
 }
 // UnsafeCell does not implement Sync and therefore Backbuffer could not be passed to the
 // worker threads without this implementation.
@@ -182,22 +188,48 @@ unsafe impl Sync for Backbuffer {}
 
 impl Backbuffer {
     pub fn new(width: u32, height: u32) -> Backbuffer {
+        let num_pixels = (width * height) as usize;
         Backbuffer {
             width: width,
             height: height,
-            pixels: {
+            num_samples: UnsafeCell::new(1),
+            pixels32: {
                 let mut pixels = Vec::new();
-                let num_pixels = (width * height) as usize;
-                pixels.resize(num_pixels, Pixel(0, 0, 0));
+                pixels.resize(num_pixels, Pixel32(0, 0, 0));
                 UnsafeCell::new(pixels)
             },
+            pixels8: {
+                let mut pixels = Vec::new();
+                pixels.resize(num_pixels, Pixel8(0, 0, 0));
+                UnsafeCell::new(pixels)
+            },
+
         }
     }
 
-    fn set_pixel_unsafe(&self, x: u32, y: u32, pixel: Pixel) {
+    fn add_pixel32_unsafe(&self, x: u32, y: u32, pixel: Pixel32) {
         let index = (y*self.width + x) as usize;
         unsafe {
-            (*self.pixels.get())[index] = pixel;
+            let old_pixel = (*self.pixels32.get())[index].clone();
+            let new_pixel = Pixel32(
+                old_pixel.0 + pixel.0,
+                old_pixel.1 + pixel.1,
+                old_pixel.2 + pixel.2,
+            );
+            (*self.pixels32.get())[index] = new_pixel;
+        }
+    }
+
+    fn assign_pixel8_unsafe(&self, x: u32, y: u32) {
+        let index = (y*self.width + x) as usize;
+        unsafe {
+            let num_samples = *self.num_samples.get() as u32;
+            let ref pixel32 = (*self.pixels32.get())[index];
+            (*self.pixels8.get())[index] = Pixel8(
+                (pixel32.0 / num_samples) as u8,
+                (pixel32.1 / num_samples) as u8,
+                (pixel32.2 / num_samples) as u8,
+            );
         }
     }
 }
@@ -428,7 +460,7 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let k_diff = Vec3::one() - k_spec;
 
                 // The cosine between light and normal was canceled out by the BRDF.
-                let l_spec = f_r*light_radiance;//*PI;
+                let l_spec = f_r*light_radiance*PI;
 
                 // Diffuse reflection:
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
@@ -504,8 +536,9 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
             };
             let ldr_radiance = tone_map_reinhard(hdr_radiance);
             let gamma_corrected = gamma_correction(ldr_radiance);
-            let color = Pixel::from_unit(gamma_corrected);
-            backbuffer.set_pixel_unsafe(x, y, color);
+            let color = Pixel32::from_unit(gamma_corrected);
+            backbuffer.add_pixel32_unsafe(x, y, color);
+            backbuffer.assign_pixel8_unsafe(x, y);
         }
     }
 }

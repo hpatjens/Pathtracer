@@ -51,11 +51,20 @@ pub fn mix_vec3(a: Vec3, b: Vec3, x: f32) -> Vec3 {
     (1.0 - x)*a + x*b
 }
 
-#[derive(Clone)]
-pub struct Pixel(pub u8, pub u8, pub u8);
+#[derive(Clone, Debug)]
+pub struct Pixel8(pub u8, pub u8, pub u8);
 
-impl Pixel {
+impl Pixel8 {
     pub fn from_unit(color: Vec3) -> Self {
-        Pixel((color.x*255.0) as u8, (color.y*255.0) as u8, (color.z*255.0) as u8)
+        Pixel8((color.x*255.0) as u8, (color.y*255.0) as u8, (color.z*255.0) as u8)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Pixel32(pub u32, pub u32, pub u32);
+
+impl Pixel32 {
+    pub fn from_unit(color: Vec3) -> Self {
+        Pixel32((color.x*255.0) as u32, (color.y*255.0) as u32, (color.z*255.0) as u32)
     }
 }
