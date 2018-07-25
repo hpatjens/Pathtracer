@@ -37,6 +37,10 @@ const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
 
 fn update(camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
+
+    // @TODO: The camera should be specified by the scene file. Parameters like t could be used too.
+    return;
+
     let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
 
     let x = frame_index as f32 / 80.0;
@@ -93,7 +97,7 @@ fn main() {
             Arc::new(RwLock::new(Scene::new(Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())))
         },
     };
-    let camera = Arc::new(RwLock::new(Camera::new(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
+    let camera = Arc::new(RwLock::new(Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
 
     let worker_pool = {
         const NUM_WORKER_THREADS: usize = 8;
