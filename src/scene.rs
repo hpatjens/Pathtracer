@@ -7,6 +7,7 @@ pub struct HDRITexture {
     pub pixels: Vec<f32>,
     pub width: usize,
     pub height: usize,
+    last_pixel_index: usize, // Index of the last pixel to clamp the index while accessing the array
 }
 
 impl HDRITexture {
@@ -15,6 +16,7 @@ impl HDRITexture {
             pixels: pixels,
             width: width,
             height: height,
+            last_pixel_index: width*height*3 - 3,
         }
     }
 
@@ -46,7 +48,7 @@ impl<'a>HDRITextureSampler<'a> {
 
         let pix_coord_x = (tex_coord.x*self.texture.width  as f32) as usize;
         let pix_coord_y = (tex_coord.y*self.texture.height as f32) as usize;
-        let index = 3*(pix_coord_y*self.texture.width + pix_coord_x);
+        let index = usize::min(self.texture.last_pixel_index, usize::max(0, 3*(pix_coord_y*self.texture.width + pix_coord_x)));
 
         Vec3::new(
             self.texture.pixels[index + 0],
@@ -196,14 +198,16 @@ pub fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {
 
     for plane in &scene.planes {
         if let Some(hit) = intersect_plane(plane, &ray) {
-            nearest_hit = if let Some(nearest_hit) = nearest_hit {
-                if hit.parameter < nearest_hit.parameter {
-                    Some(hit)
+            if hit.transition == Transition::In {
+                nearest_hit = if let Some(nearest_hit) = nearest_hit {
+                    if hit.parameter < nearest_hit.parameter {
+                        Some(hit)
+                    } else {
+                        Some(nearest_hit)
+                    }
                 } else {
-                    Some(nearest_hit)
+                    Some(hit)
                 }
-            } else {
-                Some(hit)
             }
         }
     }

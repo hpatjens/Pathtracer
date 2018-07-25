@@ -12,16 +12,16 @@ sky {
 }
 
 
-//plane {
-//    origin = (0.0, -1.1, 0.0)
-//    u = (1.0, 0.0, 0.0)
-//    v = (0.0, 0.0, -1.0)
-//    material = physically {
-//        reflectivity = (0.7, 0.7, 0.7)
-//        roughness = 0.01
-//        metalness = 0.0
-//    }
-//}
+plane {
+    origin = (0.0, -1.2, 0.0)
+    u = (1.0, 0.0, 0.0)
+    v = (0.0, 0.0, -1.0)
+    material = physically {
+        reflectivity = (0.7, 0.7, 0.7)
+        roughness = 0.01
+        metalness = 0.0
+    }
+}
 
 sphere {
     origin = (-0.2, 0.25, 3.0)
