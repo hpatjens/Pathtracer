@@ -1,6 +1,6 @@
 use common::*;
 
-use scene::{Scene, Material, Sphere, Plane, PBRParameters};
+use scene::{Scene, Sky, Material, Sphere, Plane, PBRParameters};
 
 #[derive(Clone, Debug, new)]
 pub struct ParseError {
@@ -53,6 +53,7 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
 
     let mut spheres = Vec::new();
     let mut planes = Vec::new();
+    let mut sky = Sky::Constant(Vec3::new(1.0, 1.0, 1.0));
 
     // @TODO: This structure is needed more often. There should be a function doing this.
     loop {
@@ -73,10 +74,66 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
             continue;
         }
 
+        if let Ok((parsed_sky, context)) = parse_sky(&context) {
+            sky = parsed_sky;
+            running_context = context;
+            continue;
+        }
+
         return Err(ParseError::new(String::from("Expected sphere or plane."), context.position));
     }
 
-    Ok(Scene::new(spheres, planes))
+    Ok(Scene::new(sky, spheres, planes))
+}
+
+enum SkyType { Constant, HDRI }
+
+fn parse_whitespace_and_sky_type<'a>(context: &ParseContext<'a>) -> ParseResult<'a, SkyType> {
+    let (_, context) = parse_whitespace(&context)?;
+
+    if let Ok((_, context)) = parse_whitespace_and_string(&context, "constant") {
+        return success(SkyType::Constant, context);
+    }
+
+    if let Ok((_, context)) = parse_whitespace_and_string(&context, "hdri") {
+        return success(SkyType::HDRI, context);
+    }
+
+    error(String::from("Unknown sky type."), &context)
+}
+
+fn parse_whitespace_and_constant_sky<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Sky> {
+    let (_       , context) = parse_whitespace_and_string(&context, "{")?;
+    let (_       , context) = parse_whitespace_and_string(&context, "radiance")?;
+    let (_       , context) = parse_whitespace_and_string(&context, "=")?;
+    let (radiance, context) = parse_whitespace_and_vec3(&context)?;
+    let (_       , context) = parse_whitespace_and_string(&context, "}")?;
+    success(Sky::Constant(radiance), context)
+}
+
+fn parse_whitespace_and_hdri_sky<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Sky> {
+    let (_   , context) = parse_whitespace_and_string(&context, "{")?;
+    let (_   , context) = parse_whitespace_and_string(&context, "path")?;
+    let (_   , context) = parse_whitespace_and_string(&context, "=")?;
+    let (path, context) = parse_whitespace_and_path(&context)?;
+    let (_   , context) = parse_whitespace_and_string(&context, "}")?;
+    success(Sky::HDRI(path, None), context)
+}
+
+fn parse_sky<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Sky> {
+    let (_, context) = parse_whitespace_and_string(&context, "sky")?;
+    let (_, context) = parse_whitespace_and_string(&context, "{")?;
+
+    let (sky_type, context) = parse_whitespace_and_sky_type(&context)?;
+
+    let (sky, context) = match sky_type {
+        SkyType::Constant => parse_whitespace_and_constant_sky(&context),
+        SkyType::HDRI => parse_whitespace_and_hdri_sky(&context),
+    }?;
+
+    let (_, context) = parse_whitespace_and_string(&context, "}")?;
+    
+    success(sky, context)
 }
 
 fn parse_whitespace_and_vec3<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Vec3> {
@@ -246,6 +303,23 @@ fn parse_plane<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Plane> {
     let (_       , context) = parse_whitespace_and_string(&context, "}")?;
 
     success(Plane::new(origin, u, v, material), context)
+}
+
+fn parse_whitespace_and_path<'a>(context: &ParseContext<'a>) -> ParseResult<'a, String> {
+    let (_, context) = parse_whitespace(&context)?;
+
+    // @TODO: How is a path defined?
+    let ident = context.text.chars().take_while(|c| c.is_alphabetic() || c.is_numeric() || *c == '\\' || *c == '/' || *c == '_' || *c == '.');
+    let count = ident.count();
+    if count == 0 {
+        error(String::from("Path expected."), &context)
+    } else {
+        let (path, rest) = context.text.split_at(count);
+        let mut position = context.position;
+        position.advanced_column_n(count);
+        let new_context = ParseContext::new(rest, position);
+        success(String::from(path), new_context)
+    }
 }
 
 #[allow(dead_code)]

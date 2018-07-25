@@ -1,10 +1,16 @@
+sky {
+    hdri {
+        path = scenes/sample/venice_sunset_1k.hdr
+    }
+}
+
 plane {
     origin = (0.0, -1.0, 0.0)
     u = (1.0, 0.0, 0.0)
     v = (0.0, 0.0, -1.0)
     material = physically {
-        reflectivity = (0.27, 0.87, 0.97)
-        roughness = 1.0
+        reflectivity = (0.7, 0.7, 0.7)
+        roughness = 0.01
         metalness = 0.0
     }
 }
@@ -41,6 +47,6 @@ sphere {
     material = physically {
         reflectivity = (0.98, 0.96, 0.91)
         roughness = 0.09
-        metalness = 0.0
+        metalness = 1.0
     }
 }

@@ -1,6 +1,6 @@
 use common::*;
 
-use scene::{Scene, Plane, PBRParameters, Material, find_scene_hit};
+use scene::{Scene, Sky, Plane, PBRParameters, Material, find_scene_hit};
 
 use std::sync::{Arc, RwLock};
 use std::cell::UnsafeCell;
@@ -24,6 +24,15 @@ pub struct Hit<'a> {
     pub transition: Transition,
 }
 
+#[derive(Debug, Clone, new)]
+pub struct Meta {
+    pixel_position: Vec2u,
+    sample_index: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Basis(pub Vec3, pub Vec3, pub Vec3);
+
 #[derive(Debug)]
 pub struct Camera {
     projection_plane: Plane,
@@ -32,9 +41,6 @@ pub struct Camera {
     height: f32,
     z_near: f32,
 }
-
-#[derive(Clone, Copy, Debug)]
-pub struct Basis(pub Vec3, pub Vec3, pub Vec3);
 
 impl Camera {
     pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Self {
@@ -317,7 +323,7 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
 
     let alpha = roughness*roughness;
     let h = (v + l).normalize();
-    let cos_theta = h.dot(v);
+    let cos_theta = f32::max(0.0, h.dot(v));
 
     // @TODO: There are multiple definitions for this. What's the best?
     // let k = (alpha + 1.0)*(alpha + 1.0) / 8.0;
@@ -331,7 +337,7 @@ fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, pbr_parameters: &PB
     let fresnel = fresnel_schlick(cos_theta, f0);
     let geometry = geometry_smith(n, v, l, k);
     let num = geometry*fresnel;
-    let denum = 4.0*n.dot(v);
+    let denum = 4.0*f32::max(0.0, n.dot(v));
     (num / denum, fresnel)
 }
 
@@ -366,7 +372,7 @@ pub fn to_basis(basis: Basis, v: Vec3) -> Vec3 {
     x*v.x + y*v.y + z*v.z
 }
 
-fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
+fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     // @TODO: Find all the places where NANs can be generated and fix as many as it makes sense.
 
     if depth <= 0 {
@@ -382,10 +388,12 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
 
         match nearest_hit.material {
             Material::None => Vec3::one(),
-            Material::Emissive(ref color) => color.clone(),
+            Material::Emissive(ref color) => {
+                color.clone()
+            },
             Material::Mirror => {
                 let reflection_direction = reflect(ray.direction, nearest_hit.normal);
-                trace_radiance(&Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
+                trace_radiance(meta, &Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
             },
             Material::Translucent(ior) => {
                 const IOR_AIR: f32 = 1.0;
@@ -394,7 +402,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                     Transition::Out => (*ior, IOR_AIR),
                 };
                 let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);
-                trace_radiance(&Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
+                trace_radiance(meta, &Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1)
             },
             Material::Physically(ref pbr_parameters) => {
                 let tangent_space = construct_coordinate_system(nearest_hit.normal);
@@ -411,7 +419,7 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let light_ray = Ray::new(outwards_shifted_position(), light);
                 let light_cos_theta = light.dot(normal);
 
-                let light_radiance = trace_radiance(&light_ray, scene, depth - 1);
+                let light_radiance = trace_radiance(meta, &light_ray, scene, depth - 1);
 
                 // Specular reflection:
                 // The cos(theta) was canceled out as it is in the denominator of the Cook-Torrance BRDF.
@@ -419,7 +427,8 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let (f_r, k_spec) = brdf_cook_torrance(view, light, normal, pbr_parameters);
                 let k_diff = Vec3::one() - k_spec;
 
-                let l_spec = f_r*light_radiance*PI;
+                // The cosine between light and normal was canceled out by the BRDF.
+                let l_spec = f_r*light_radiance;//*PI;
 
                 // Diffuse reflection:
                 // @TODO: Does this have to be multiplied by PI or 2*PI?
@@ -430,12 +439,17 @@ fn trace_radiance(ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
             },
         }
     } else {
-        // @TODO: Make a nice gradient for the sky of sample an equirectangular projection.
-        let theta = f32::powf(f32::max(0.0, ray.direction.y), 1.0/5.0);
-        let radiance_upper = Vec3::new(0.41, 0.81, 1.0);
-        let radiance_lower = Vec3::new(1.0, 0.78, 0.26);
-        let radiance = mix_vec3(radiance_lower, radiance_upper, theta);
-        0.1*radiance
+        match &scene.sky {
+            &Sky::Constant(radiance) => radiance,
+            &Sky::HDRI(ref _path, ref option_texture) => {
+                if let Some(texture) = option_texture {
+                    let sampler = texture.sampler();
+                    sampler.sample_equirectangular(ray.direction)
+                } else {
+                    Vec3::one() // Returning white until the sky is loaded
+                }
+            },
+        }
     }
 }
 
@@ -482,8 +496,9 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
             let hdr_radiance = {
                 const N: usize = 1;
                 let mut hdr_radiance = Vec3::zero();
-                for _ in 0..N {
-                    hdr_radiance += trace_radiance(&ray, &*scene, 4);
+                for s in 0..N {
+                    let meta = Meta::new(Vec2u::new(x, y), s);
+                    hdr_radiance += trace_radiance(&meta, &ray, &*scene, 4);
                 }
                 hdr_radiance / N as f32
             };

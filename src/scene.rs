@@ -3,6 +3,74 @@ use common::*;
 use tracer::{Hit, Transition};
 
 #[derive(Clone, Debug)]
+pub struct HDRITexture {
+    pub pixels: Vec<f32>,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl HDRITexture {
+    pub fn new(pixels: Vec<f32>, width: usize, height: usize) -> HDRITexture {
+        HDRITexture {
+            pixels: pixels,
+            width: width,
+            height: height,
+        }
+    }
+
+    pub fn sampler<'a>(&'a self) -> HDRITextureSampler<'a> {
+        HDRITextureSampler {
+            texture: self,
+        }
+    }
+}
+
+fn repeat_f32(x: f32) -> f32 {
+    if x < 0.0 {
+        x - (x as i32) as f32 + 1.0
+    } else {
+        x - (x as i32) as f32
+    }
+}
+
+pub struct HDRITextureSampler<'a> {
+    texture: &'a HDRITexture,
+}
+
+impl<'a>HDRITextureSampler<'a> {
+    pub fn sample(&self, tex_coord: Vec2) -> Vec3 {
+        let tex_coord = Vec2::new(
+            repeat_f32(tex_coord.x),
+            repeat_f32(tex_coord.y),
+        );
+
+        let pix_coord_x = (tex_coord.x*self.texture.width  as f32) as usize;
+        let pix_coord_y = (tex_coord.y*self.texture.height as f32) as usize;
+        let index = 3*(pix_coord_y*self.texture.width + pix_coord_x);
+
+        Vec3::new(
+            self.texture.pixels[index + 0],
+            self.texture.pixels[index + 1],
+            self.texture.pixels[index + 2],
+        )
+    }
+
+    pub fn sample_equirectangular(&self, direction: Vec3) -> Vec3 {
+        let uv = Vec2::new(
+            f32::atan2(direction.z, direction.x),
+            f32::acos(direction.y),
+        ) / Vec2::new(2.0*PI, PI);
+        self.sample(uv)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Sky {
+    Constant(Vec3),
+    HDRI(String, Option<HDRITexture>),
+}
+
+#[derive(Clone, Debug)]
 pub struct PBRParameters {
     pub reflectivity: Vec3,
     pub roughness: f32,
@@ -37,6 +105,7 @@ pub struct Sphere {
 
 #[derive(Debug, new)]
 pub struct Scene {
+    pub sky: Sky,
     pub spheres: Vec<Sphere>,
     pub planes: Vec<Plane>,
 }

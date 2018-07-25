@@ -6,6 +6,7 @@ extern crate hmath;
 extern crate rand;
 extern crate time;
 extern crate notify;
+extern crate stb_image;
 
 mod common;
 use common::*;
@@ -15,7 +16,7 @@ mod worker;
 mod tracer;
 mod parser;
 
-use scene::Scene;
+use scene::{Scene, Sky, HDRITexture};
 use tracer::Camera;
 
 use glium::glutin::dpi::LogicalSize;
@@ -58,7 +59,7 @@ fn main() {
     let (sender, receiver) = channel();
 
     // @TODO: Search for a file in the current folder and add a command line argument.
-    const SCENE_FILENAME: &str = "content/sample.scene";
+    const SCENE_FILENAME: &str = "scenes/sample/sample.scene";
 
     let mut watcher: notify::RecommendedWatcher = match notify::Watcher::new(sender, Duration::from_millis(1000)) {
         Ok(watcher) => watcher,
@@ -89,7 +90,7 @@ fn main() {
         Ok(scene) => Arc::new(RwLock::new(scene)),
         Err(err) => {
             println!("Could not load the scene. Error: {:?}", err);
-            Arc::new(RwLock::new(Scene::new(Vec::new(), Vec::new())))
+            Arc::new(RwLock::new(Scene::new(Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())))
         },
     };
     let camera = Arc::new(RwLock::new(Camera::new(Vec3::one(), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
@@ -107,6 +108,27 @@ fn main() {
     let mut running = true;
     while running {
         let frame_time_start = time::precise_time_ns();
+
+        {
+            // @TODO: This hint should sit in sample.scene when comments are allowed
+            // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset
+
+            let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap.
+            if let Sky::HDRI(ref path, ref mut option_texture) = scene.sky {
+                if let None = option_texture {
+                    *option_texture = Some(match stb_image::image::load(path) {
+                        stb_image::image::LoadResult::ImageU8(_) => panic!("Image \"{}\" is not an HDR image.", path),
+                        stb_image::image::LoadResult::ImageF32(image) => {
+                            // @TODO: This should not be an assert.
+                            assert!(image.depth == 3);
+                            HDRITexture::new(image.data, image.width, image.height)
+                        },
+                        stb_image::image::LoadResult::Error(message) => panic!("Could not load the image \"{}\"! Error: {}", path, message),
+                    });
+                }
+            }
+        }
+
 
         match receiver.try_recv() {
             Ok(_) => {
