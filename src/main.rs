@@ -65,7 +65,7 @@ fn main() {
     // @TODO: Search for a file in the current folder and add a command line argument.
     const SCENE_FILENAME: &str = "scenes/sample/sample.scene";
 
-    let mut watcher: notify::RecommendedWatcher = match notify::Watcher::new(sender, Duration::from_millis(1000)) {
+    let mut watcher: notify::RecommendedWatcher = match notify::Watcher::new(sender, Duration::from_millis(100)) {
         Ok(watcher) => watcher,
         Err(_) => panic!("Could not create the watcher for the scene file."),
     };
@@ -135,17 +135,19 @@ fn main() {
 
 
         match receiver.try_recv() {
-            Ok(_) => {
-                let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
-                match load_scene(SCENE_FILENAME) {
-                    Ok(loaded_scene) => {
-                        *scene = loaded_scene;
-                        backbuffer.clear();
-                    },
-                    Err(err) => {
-                        println!("Could not load the scene. Error: {:?}", err);
-                    },
-                };
+            Ok(event) => {
+                if let notify::DebouncedEvent::Write(_) = event {
+                    let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
+                    match load_scene(SCENE_FILENAME) {
+                        Ok(loaded_scene) => {
+                            *scene = loaded_scene;
+                            backbuffer.clear();
+                        },
+                        Err(err) => {
+                            println!("Could not load the scene. Error: {:?}", err);
+                        },
+                    };
+                }
             },
             Err(_) => (), // @TODO: If disconnected panic
         }
