@@ -138,7 +138,10 @@ fn main() {
             Ok(_) => {
                 let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap
                 match load_scene(SCENE_FILENAME) {
-                    Ok(loaded_scene) => *scene = loaded_scene,
+                    Ok(loaded_scene) => {
+                        *scene = loaded_scene;
+                        backbuffer.clear();
+                    },
                     Err(err) => {
                         println!("Could not load the scene. Error: {:?}", err);
                     },

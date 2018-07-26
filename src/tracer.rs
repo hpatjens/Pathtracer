@@ -207,6 +207,22 @@ impl Backbuffer {
         }
     }
 
+    pub fn clear(&self) {
+        unsafe {
+            let ref mut pixels32 = *self.pixels32.get();
+            for i in 0..pixels32.len() {
+                pixels32[i] = Pixel32(0, 0, 0);
+            }
+
+            let ref mut pixels8 = *self.pixels8.get();
+            for i in 0..pixels8.len() {
+                pixels8[i] = Pixel8(0, 0, 0);
+            }
+
+            *self.num_samples.get() = 1;
+        }
+    }
+
     fn add_pixel32_unsafe(&self, x: u32, y: u32, pixel: Pixel32) {
         let index = (y*self.width + x) as usize;
         unsafe {
