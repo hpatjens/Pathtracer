@@ -15,6 +15,9 @@ mod scene;
 mod worker;
 mod tracer;
 mod parser;
+mod content;
+
+use content::Content;
 
 use scene::{Scene, Sky, HDRITexture};
 use tracer::Camera;
@@ -109,30 +112,26 @@ fn main() {
         }))
     };
 
+    let content = Content::new();
+
     let mut running = true;
     while running {
         let frame_time_start = time::precise_time_ns();
 
         {
-            // @TODO: This hint should sit in sample.scene when comments are allowed
-            // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset
-
-            let mut scene = scene.write().unwrap(); // @TODO: Handle the unwrap.
+            let mut scene = scene.write().expect("Could not get writing access to the scene for updating the sky texture.");
             if let Sky::HDRI(ref path, ref mut option_texture) = scene.sky {
                 if let None = option_texture {
-                    *option_texture = Some(match stb_image::image::load(path) {
-                        stb_image::image::LoadResult::ImageU8(_) => panic!("Image \"{}\" is not an HDR image.", path),
-                        stb_image::image::LoadResult::ImageF32(image) => {
-                            // @TODO: This should not be an assert.
-                            assert!(image.depth == 3);
-                            HDRITexture::new(image.data, image.width, image.height)
+                    *option_texture = match content.get_hdri_texture(path) {
+                        Some(hdri_texture) => {
+                            backbuffer.clear();
+                            Some(hdri_texture)
                         },
-                        stb_image::image::LoadResult::Error(message) => panic!("Could not load the image \"{}\"! Error: {}", path, message),
-                    });
+                        None => None,
+                    };
                 }
             }
         }
-
 
         match receiver.try_recv() {
             Ok(event) => {

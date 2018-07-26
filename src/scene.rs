@@ -2,6 +2,8 @@ use common::*;
 
 use tracer::{Hit, Transition};
 
+use std::sync::Arc;
+
 #[derive(Clone, Debug)]
 pub struct HDRITexture {
     pub pixels: Vec<f32>,
@@ -69,7 +71,7 @@ impl<'a>HDRITextureSampler<'a> {
 #[derive(Clone, Debug)]
 pub enum Sky {
     Constant(Vec3),
-    HDRI(String, Option<HDRITexture>),
+    HDRI(String, Option<Arc<HDRITexture>>),
 }
 
 #[derive(Clone, Debug)]
