@@ -3,3 +3,5 @@
 **/*.rs.bk
 
 /scenes/sample/venice_sunset_8k.hdr
+/scenes/sample/veranda_8k.hdr
+/scenes/sample/mossy_forest_8k.hdr

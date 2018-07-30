@@ -1,6 +1,7 @@
 use common::*;
 
 use scene::{Scene, Sky, Material, Sphere, Plane, PBRParameters};
+use tracer::{Camera, ToneMapping};
 
 #[derive(Clone, Debug, new)]
 pub struct ParseError {
@@ -54,6 +55,7 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
     let mut spheres = Vec::new();
     let mut planes = Vec::new();
     let mut sky = Sky::Constant(Vec3::new(1.0, 1.0, 1.0));
+    let mut camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Clamp);
 
     // @TODO: This structure is needed more often. There should be a function doing this.
     loop {
@@ -80,10 +82,84 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
             continue;
         }
 
-        return Err(ParseError::new(String::from("Expected \"sphere\", \"plane\" or \"sky\"."), context.position));
+        if let Ok((parsed_camera, context)) = parse_free_and_camera(&context) {
+            camera = parsed_camera;
+            running_context = context;
+            continue;
+        }
+
+        return Err(ParseError::new(String::from("Expected \"camera\", \"sphere\", \"plane\" or \"sky\"."), context.position));
     }
 
-    Ok(Scene::new(sky, spheres, planes))
+    Ok(Scene::new(camera, sky, spheres, planes))
+}
+
+fn parse_free_and_camera<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Camera> {
+    let (_           , context) = parse_free(&context)?;
+        
+    let (_           , context) = parse_free_and_string(&context, "camera")?;
+    let (_           , context) = parse_free_and_string(&context, "{")?;
+    
+    let (_           , context) = parse_free_and_string(&context, "position")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (position    , context) = parse_free_and_vec3(&context)?;
+    
+    let (_           , context) = parse_free_and_string(&context, "target")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (target      , context) = parse_free_and_vec3(&context)?;
+    
+    let (_           , context) = parse_free_and_string(&context, "up")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (up          , context) = parse_free_and_vec3(&context)?;
+
+    let (_           , context) = parse_free_and_string(&context, "width")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (width       , context) = parse_free_and_f32(&context)?;
+
+    let (_           , context) = parse_free_and_string(&context, "height")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (height      , context) = parse_free_and_f32(&context)?;
+
+    let (_           , context) = parse_free_and_string(&context, "z_near")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (z_near      , context) = parse_free_and_f32(&context)?;
+    
+    let (_           , context) = parse_free_and_string(&context, "tone_mapping")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (tone_mapping, context) = parse_free_and_tone_mapping(&context)?;
+
+    let (_           , context) = parse_free_and_string(&context, "}")?;
+
+    success(Camera::new(position, target, up, width, height, z_near, tone_mapping), context)
+}
+
+fn parse_free_and_tone_mapping<'a>(context: &ParseContext<'a>) -> ParseResult<'a, ToneMapping> {
+    let (_           , context) = parse_free(&context)?;
+
+    if let Ok((_, context)) = parse_free_and_string(&context, "clamp") {
+        return success(ToneMapping::Clamp, context);
+    }
+
+    if let Ok((_, context)) = parse_free_and_string(&context, "reinhard") {
+        return success(ToneMapping::Reinhard, context);
+    }
+
+    if let Ok((tone_mapping, context)) = parse_free_and_exposure_tone_mapping(&context) {
+        return success(tone_mapping, context);
+    }
+
+    error(String::from("Unknown sky type."), &context)
+}
+
+fn parse_free_and_exposure_tone_mapping<'a>(context: &ParseContext<'a>) -> ParseResult<'a, ToneMapping> {
+    let (_    , context) = parse_free_and_string(&context, "exposure")?;
+    let (_    , context) = parse_free_and_string(&context, "{")?;
+    let (_    , context) = parse_free_and_string(&context, "value")?;
+    let (_    , context) = parse_free_and_string(&context, "=")?;
+    let (value, context) = parse_free_and_f32(&context)?;
+    let (_    , context) = parse_free_and_string(&context, "}")?;
+
+    success(ToneMapping::Exposure(value), context)
 }
 
 enum SkyType { Constant, HDRI }

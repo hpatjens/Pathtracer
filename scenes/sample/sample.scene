@@ -8,25 +8,36 @@ sky {
     // could be used to define the sky.
     hdri {
         // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset
-        path = scenes/sample/venice_sunset_8k.hdr
+        path = scenes/sample/mossy_forest_8k.hdr
     }
 }
 
+camera {
+    position = (0.0, 2.5, 15.0)
+    target = (0.0, 1.0, 0.0)
+    up = (0.0, 1.0, 0.0)
+    width = 4.0
+    height = 4.0
+    z_near = 5.0
+    tone_mapping = exposure {
+        value = 2.0
+    }
+}
 
 plane {
     origin = (0.0, -1.2, 0.0)
     u = (1.0, 0.0, 0.0)
     v = (0.0, 0.0, -1.0)
     material = physically {
-        reflectivity = (0.05, 0.05, 0.05)
-        roughness = 0.8
+        reflectivity = (0.8, 0.8, 0.8)
+        roughness = 0.6
         metalness = 0.0
     }
 }
 
 // Glass
 sphere {
-    origin = (-0.2, 0.1, 3.0)
+    origin = (-0.2, 0.05, 3.0)
     radius = 1.0
     material = translucent {
         ior = 1.5
@@ -35,8 +46,8 @@ sphere {
 
 // Red
 sphere {
-    origin = (-1.5, 1.2, -0.5)
-    radius = 1.8
+    origin = (-2.2, 1.2, -0.5)
+    radius = 2.0
     material = physically {
         reflectivity = (1.00, 0.71, 0.29)	
         roughness = 0.05
@@ -59,7 +70,7 @@ sphere {
     radius = 0.8
     material = physically {
         reflectivity = (0.95, 0.93, 0.88)
-        roughness = 0.4
+        roughness = 0.2
         metalness = 1.0
     }
 }

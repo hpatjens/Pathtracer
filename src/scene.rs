@@ -1,6 +1,6 @@
 use common::*;
 
-use tracer::{Hit, Transition};
+use tracer::{Hit, Transition, Camera};
 
 use std::sync::Arc;
 
@@ -109,6 +109,7 @@ pub struct Sphere {
 
 #[derive(Debug, new)]
 pub struct Scene {
+    pub camera: Camera,
     pub sky: Sky,
     pub spheres: Vec<Sphere>,
     pub planes: Vec<Plane>,

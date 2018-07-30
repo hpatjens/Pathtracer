@@ -20,7 +20,7 @@ mod content;
 use content::Content;
 
 use scene::{Scene, Sky};
-use tracer::Camera;
+use tracer::{Camera, ToneMapping};
 
 use glium::glutin::dpi::LogicalSize;
 use notify::Watcher;
@@ -82,18 +82,17 @@ fn main() {
         Ok(scene) => Arc::new(RwLock::new(scene)),
         Err(err) => {
             println!("Could not load the scene. Error: {:?}", err);
-            Arc::new(RwLock::new(Scene::new(Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())))
+            let camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Exposure(1.0));
+            Arc::new(RwLock::new(Scene::new(camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())))
         },
     };
-    let camera = Arc::new(RwLock::new(Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0)));
 
     let worker_pool = {
         const NUM_WORKER_THREADS: usize = 8;
         let backbuffer2 = backbuffer.clone();
-        let camera2 = camera.clone();
         let scene2 = scene.clone();
         worker::WorkerPool::new(NUM_WORKER_THREADS, Box::new(move |work_tile| {
-            tracer::render(work_tile, &backbuffer2, camera2.clone(), scene2.clone());
+            tracer::render(work_tile, &backbuffer2, scene2.clone());
         }))
     };
 

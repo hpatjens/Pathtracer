@@ -33,6 +33,13 @@ pub struct Meta {
 #[derive(Clone, Copy, Debug)]
 pub struct Basis(pub Vec3, pub Vec3, pub Vec3);
 
+#[derive(Clone, Debug)]
+pub enum ToneMapping {
+    Clamp,
+    Reinhard,
+    Exposure(f32),
+}
+
 #[derive(Debug)]
 pub struct Camera {
     projection_plane: Plane,
@@ -40,16 +47,18 @@ pub struct Camera {
     width: f32,
     height: f32,
     z_near: f32,
+    tone_mapping: ToneMapping,
 }
 
 impl Camera {
-    pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32) -> Self {
+    pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32, tone_mapping: ToneMapping) -> Self {
         Camera {
             projection_plane: Self::construct_projection_plane(position, target, up, width, height, z_near),
             position: position,
             width: width,
             height: height,
             z_near: z_near,
+            tone_mapping: tone_mapping,
         }
     }
 
@@ -514,6 +523,15 @@ fn tone_map_clamp(radiance: Vec3) -> Vec3 {
     )
 }
 
+#[allow(dead_code)]
+fn tone_map_exposure(radiance: Vec3, exposure: f32) -> Vec3 {
+    Vec3::new(
+        1.0 - f32::exp(-exposure*radiance.x),
+        1.0 - f32::exp(-exposure*radiance.y),
+        1.0 - f32::exp(-exposure*radiance.z),
+    )
+}
+
 fn gamma_correction(radiance: Vec3) -> Vec3 {
     const GAMMA: f32 = 1.0/2.2;
     Vec3::new(
@@ -523,11 +541,10 @@ fn gamma_correction(radiance: Vec3) -> Vec3 {
     )
 }
 
-pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwLock<Camera>>, scene: Arc<RwLock<Scene>>) {
+pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, scene: Arc<RwLock<Scene>>) {
     let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
-    let camera = camera.read().unwrap(); // @TODO: Handle the unwrap
 
-    let sampler = camera.sample(backbuffer.width, backbuffer.height);
+    let sampler = scene.camera.sample(backbuffer.width, backbuffer.height);
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
     let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);
@@ -549,7 +566,11 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, camera: Arc<RwL
                 }
                 hdr_radiance / N as f32
             };
-            let ldr_radiance = tone_map_reinhard(hdr_radiance);
+            let ldr_radiance = match scene.camera.tone_mapping {
+                ToneMapping::Clamp => tone_map_clamp(hdr_radiance),
+                ToneMapping::Reinhard => tone_map_reinhard(hdr_radiance),
+                ToneMapping::Exposure(value) => tone_map_exposure(hdr_radiance, value),
+            };
             let gamma_corrected = gamma_correction(ldr_radiance);
             let color = Pixel32::from_unit(gamma_corrected);
             backbuffer.add_pixel32_unsafe(x, y, color);
