@@ -3,7 +3,6 @@ use common::*;
 use scene::{Scene, Sky, Plane, PBRParameters, Material, find_scene_hit};
 
 use std::sync::{Arc, RwLock};
-use std::sync::atomic::AtomicBool;
 use std::cell::UnsafeCell;
 
 #[derive(Clone, Debug, new)]

@@ -33,6 +33,7 @@ pub enum AssetState<T> {
 pub struct Content {
     hdri_textures: Arc<Mutex<BTreeMap<String, AssetState<Arc<HDRITexture>>>>>,
     sender: Sender<AssetRequest>,
+    #[allow(dead_code)]
     thread: JoinHandle<()>,
 }
 
@@ -43,6 +44,7 @@ impl Content {
         let hdri_textures = Arc::new(Mutex::new(BTreeMap::new()));
         let hdri_textures2 = hdri_textures.clone();
 
+        // @TODO: This thread should be joined.
         let thread = thread::spawn(move || {
             loop {
                 match receiver.recv() {
@@ -74,7 +76,8 @@ impl Content {
             None => (None, true),
         };
         if request_load {
-            self.sender.send(AssetRequest::HDRITexture(String::from(path)));
+            // @TODO: Handle the unwrap
+            self.sender.send(AssetRequest::HDRITexture(String::from(path))).unwrap();
             hdri_textures.insert(String::from(path), AssetState::Loading);
         }
         result

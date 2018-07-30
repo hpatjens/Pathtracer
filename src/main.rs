@@ -19,7 +19,7 @@ mod content;
 
 use content::Content;
 
-use scene::{Scene, Sky, HDRITexture};
+use scene::{Scene, Sky};
 use tracer::Camera;
 
 use glium::glutin::dpi::LogicalSize;
@@ -38,19 +38,6 @@ extern "C" {
 
 const GL_RGB: i32 = 0x1907;
 const GL_UNSIGNED_BYTE: i32 = 0x1401;
-
-fn update(camera: &Arc<RwLock<tracer::Camera>>, frame_index: usize) {
-
-    // @TODO: The camera should be specified by the scene file. Parameters like t could be used too.
-    return;
-
-    let mut camera = camera.write().unwrap(); // @TODO: Handle the unwrap
-
-    let x = frame_index as f32 / 80.0;
-    const D: f32 = 25.0;
-    let position = Vec3::new(D*f32::cos(x), 2.0, D*f32::sin(x));
-    camera.look_at(position, Vec3::zero(), Vec3::new(0.0, 1.0, 0.0))
-}
 
 fn load_scene(filename: &str) -> Result<Scene, parser::ParseError> {
     let content = {
@@ -88,8 +75,6 @@ fn main() {
         .with_title("Pathtracer");
     let context = glium::glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events_loop).unwrap();
-
-    let mut frame_index = 0;
 
     let backbuffer = Arc::new(tracer::Backbuffer::new(width, height));
 
@@ -151,8 +136,6 @@ fn main() {
             Err(_) => (), // @TODO: If disconnected panic
         }
 
-        update(&camera, frame_index);
-
         for _ in 0..1 {
             const TILE_SIZE: u32 = 32;
             let tile_size = Vec2u::new(TILE_SIZE, TILE_SIZE);
@@ -195,8 +178,6 @@ fn main() {
                 _ => (),
             }
         });
-
-        frame_index += 1;
 
         let frame_time_end = time::precise_time_ns();
         println!("frame_time = {} ms", (frame_time_end - frame_time_start) as f64 / 1_000_000.0);

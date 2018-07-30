@@ -1,8 +1,5 @@
 use common::*;
 
-use std::iter::FilterMap;
-use std::str::Chars;
-
 use scene::{Scene, Sky, Material, Sphere, Plane, PBRParameters};
 
 #[derive(Clone, Debug, new)]
