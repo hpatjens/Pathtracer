@@ -6,6 +6,13 @@ use std::sync::{Arc, RwLock};
 use std::cell::UnsafeCell;
 
 #[derive(Clone, Debug, new)]
+pub struct ImageSettings {
+    pub width: usize,
+    pub height: usize,
+    pub sub_pixel_sampling: bool,
+}
+
+#[derive(Clone, Debug, new)]
 pub struct WorkTile {
     pub tile_index: Vec2u,
     pub position: Vec2u,
@@ -94,11 +101,12 @@ impl Camera {
         self.position = position;
     }
 
-    fn sample(&self, backbuffer_width: u32, backbuffer_height: u32) -> CameraSampler {
+    fn sample(&self, backbuffer_width: u32, backbuffer_height: u32, sub_pixel_sampling: bool) -> CameraSampler {
         CameraSampler {
             camera: self,
             u: self.projection_plane.u / backbuffer_width as f32,
             v: self.projection_plane.v / backbuffer_height as f32,
+            sub_pixel_sampling: sub_pixel_sampling,
         }
     }
 }
@@ -107,6 +115,7 @@ struct CameraSampler<'a> {
     camera: &'a Camera,
     u: Vec3,
     v: Vec3,
+    sub_pixel_sampling: bool, 
 }
 
 // @TODO: Make a trait when more camera types are added. Different camera models can
@@ -115,11 +124,16 @@ impl<'a> CameraSampler<'a> {
     #[allow(dead_code)]
     fn pinhole_ray(&self, x: u32, y: u32) -> Ray {
         let origin = {
-            let ru = random32();
-            let rv = random32();
+            let mut offset_u = x as f32;
+            let mut offset_v = y as f32;
 
-            let du = (x as f32 + ru)*self.u;
-            let dv = (y as f32 + rv)*self.v;
+            if self.sub_pixel_sampling {
+                offset_u += random32();
+                offset_v += random32();
+            }
+
+            let du = offset_u*self.u;
+            let dv = offset_v*self.v;
 
             self.camera.projection_plane.origin + du + dv
         };
@@ -607,7 +621,7 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, scene: Arc<RwLo
 
     let iso_factor = scene.camera.iso/100.0;
 
-    let sampler = scene.camera.sample(backbuffer.width, backbuffer.height);
+    let sampler = scene.camera.sample(backbuffer.width, backbuffer.height, scene.image_settings.sub_pixel_sampling);
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
     let (y0, y1) = (work_tile.position.y, work_tile.position.y + work_tile.size.y);

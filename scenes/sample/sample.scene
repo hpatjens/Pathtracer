@@ -1,3 +1,9 @@
+image {
+    width = 512
+    height = 512
+    sub_pixel_sampling = true
+}
+
 sky {
     //hdri {
     //    // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset

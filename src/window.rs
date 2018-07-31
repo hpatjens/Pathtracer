@@ -36,9 +36,6 @@ fn load_scene(filename: &str) -> Result<scene::Scene, String> {
 }
 
 pub fn start() {
-    let width: u32 = 1024;
-    let height: u32 = 1024;
-
     //
     // READING THE COMMAND LINE ARGUMENTS
     //
@@ -65,6 +62,9 @@ pub fn start() {
             scene::Scene::default()
         })));
     
+    let width = scene.read().unwrap().image_settings.width as u32;
+    let height = scene.read().unwrap().image_settings.height as u32;
+
     //
     // SETTING UP THE HOT-RELOADING OF THE SCENE FILE
     //

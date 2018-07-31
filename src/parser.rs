@@ -1,7 +1,7 @@
 use common::*;
 
 use scene::{Scene, Sky, Material, Sphere, Plane, PBRParameters};
-use tracer::{Camera, ToneMapping};
+use tracer::{ImageSettings, Camera, ToneMapping};
 
 #[derive(Clone, Debug, new)]
 pub struct ParseError {
@@ -52,6 +52,7 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
 
     let mut running_context = context.clone();
 
+    let mut image_settings = ImageSettings::new(256, 256, true);
     let mut spheres = Vec::new();
     let mut planes = Vec::new();
     let mut emissive_spheres = Vec::new();
@@ -64,6 +65,12 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
         let (_, context) = parse_free(&running_context)?;
         if context.text.len() == 0 {
             break;
+        }
+
+        if let Ok((parsed_image_settings, context)) = parse_free_and_image_settings(&context) {
+            image_settings = parsed_image_settings;
+            running_context = context;
+            continue;
         }
 
         if let Ok((sphere, context)) = parse_free_and_sphere(&context) {
@@ -101,7 +108,30 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
         return Err(ParseError::new(String::from("Expected \"camera\", \"sphere\", \"plane\" or \"sky\"."), context.position));
     }
 
-    Ok(Scene::new(camera, sky, spheres, planes, emissive_spheres, emissive_planes))
+    Ok(Scene::new(image_settings, camera, sky, spheres, planes, emissive_spheres, emissive_planes))
+}
+
+fn parse_free_and_image_settings<'a>(context: &ParseContext<'a>) -> ParseResult<'a, ImageSettings> {
+    let (_                 , context) = parse_free(&context)?;
+      
+    let (_                 , context) = parse_free_and_string(&context, "image")?;
+    let (_                 , context) = parse_free_and_string(&context, "{")?;
+          
+    let (_                 , context) = parse_free_and_string(&context, "width")?;
+    let (_                 , context) = parse_free_and_string(&context, "=")?;
+    let (width             , context) = parse_free_and_i32(&context)?;
+      
+    let (_                 , context) = parse_free_and_string(&context, "height")?;
+    let (_                 , context) = parse_free_and_string(&context, "=")?;
+    let (height            , context) = parse_free_and_i32(&context)?;
+      
+    let (_                 , context) = parse_free_and_string(&context, "sub_pixel_sampling")?;
+    let (_                 , context) = parse_free_and_string(&context, "=")?;
+    let (sub_pixel_sampling, context) = parse_free_and_bool(&context)?;
+
+    let (_                 , context) = parse_free_and_string(&context, "}")?;
+
+    success(ImageSettings::new(width as usize, height as usize, sub_pixel_sampling), context)
 }
 
 fn parse_free_and_camera<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Camera> {
@@ -545,11 +575,24 @@ fn parse_u32<'a>(context: &ParseContext<'a>) -> ParseResult<'a, u32> {
     }
 }
 
-#[allow(dead_code)]
 fn parse_free_and_i32<'a>(context: &ParseContext<'a>) -> ParseResult<'a, i32> {
     let (_    , context) = parse_free(context)?;
     let (value, context) = parse_i32(&context)?;
     success(value, context)
+}
+
+fn parse_free_and_bool<'a>(context: &ParseContext<'a>) -> ParseResult<'a, bool> {
+    let (_    , context) = parse_free(context)?;
+    
+    if let Ok((_, context)) = parse_free_and_string(&context, "true") {
+        return success(true, context);
+    }
+
+    if let Ok((_, context)) = parse_free_and_string(&context, "false") {
+        return success(true, context);
+    }
+
+    error(String::from("Expecting boolean."), &context)
 }
 
 fn parse_i32<'a>(context: &ParseContext<'a>) -> ParseResult<'a, i32> {

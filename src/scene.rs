@@ -1,6 +1,6 @@
 use common::*;
 
-use tracer::{Hit, Transition, Camera, ToneMapping};
+use tracer::{ImageSettings, Hit, Transition, Camera, ToneMapping};
 
 use std::sync::Arc;
 
@@ -150,6 +150,7 @@ impl Sphere {
 
 #[derive(Debug, new)]
 pub struct Scene {
+    pub image_settings: ImageSettings,
     pub camera: Camera,
     pub sky: Sky,
     pub spheres: Vec<Sphere>,
@@ -161,7 +162,7 @@ pub struct Scene {
 impl Default for Scene {
     fn default() -> Self {
         let camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Exposure(1.0), 100.0);
-        Scene::new(camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        Scene::new(ImageSettings::new(256, 256, true), camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new(), Vec::new(), Vec::new())
     }
 }
 
