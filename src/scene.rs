@@ -1,6 +1,6 @@
 use common::*;
 
-use tracer::{Hit, Transition, Camera};
+use tracer::{Hit, Transition, Camera, ToneMapping};
 
 use std::sync::Arc;
 
@@ -91,7 +91,6 @@ pub enum Material {
     Physically(PBRParameters),
 }
 
-// @TODO: Don't use this plane in the camera
 #[derive(Clone, Debug, new)]
 pub struct Plane {
     pub origin: Vec3,
@@ -113,6 +112,13 @@ pub struct Scene {
     pub sky: Sky,
     pub spheres: Vec<Sphere>,
     pub planes: Vec<Plane>,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        let camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Exposure(1.0));
+        Scene::new(camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())
+    }
 }
 
 fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
@@ -171,13 +177,22 @@ fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
     }
 
     let position = p + parameter*d;
+    let in_plane = position - s;
+    let on_u = in_plane.dot(plane.u.normalize());
+    if on_u > plane.u.length() || on_u < 0.0 {
+        return None;
+    }
+    let on_v = in_plane.dot(plane.v.normalize());
+    if on_v > plane.v.length() || on_v < 0.0 {
+        return None;
+    }
+
     let material = &plane.material;
     let (transition, normal) = if ray.direction.dot(n) < 0.0 { 
         (Transition::In, n)
     } else { 
         (Transition::Out, -n)
     };
-
 
     Some(Hit::new(parameter, position, normal, material, transition))
 }

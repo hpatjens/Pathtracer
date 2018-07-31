@@ -1,44 +1,108 @@
 sky {
-    // Alternatively
-    //
-    //   constant {
-    //       radiance = (x, y, z)
-    //   }
-    //
-    // could be used to define the sky.
-    hdri {
-        // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset
-        path = scenes/sample/mossy_forest_8k.hdr
+    //hdri {
+    //    // Source: https://hdrihaven.com/hdri/?c=skies&h=venice_sunset
+    //    path = scenes/sample/venice_sunset_1k.hdr
+    //}
+
+    constant {
+        radiance = (0.1, 0.1, 0.1)
     }
 }
 
 camera {
-    position = (0.0, 2.5, 15.0)
-    target = (0.0, 1.0, 0.0)
+    position = (0.0, 5.0, 15.0)
+    target = (0.0, 5.0, 0.0)
     up = (0.0, 1.0, 0.0)
-    width = 4.0
-    height = 4.0
+    width = 5.0
+    height = 5.0
     z_near = 5.0
     tone_mapping = exposure {
-        value = 2.0
+        value = 1.0
+    }
+}
+
+// Ceiling
+plane {
+    origin = (-5.0, 10.0, -5.0)
+    u = (10.0, 0.0, 0.0)
+    v = (0.0, 0.0, 10.0)
+    material = physically {
+        reflectivity = (1.0, 1.0, 1.0)
+        roughness = 0.8
+        metalness = 0.0
+    }
+}
+
+// Ceiling Light
+plane {
+    origin = (-2.5, 9.9, -2.5)
+    u = (5.0, 0.0, 0.0)
+    v = (0.0, 0.0, 5.0)
+    material = emissive {
+        radiance = (10.0, 10.0, 10.0)
     }
 }
 
 plane {
-    origin = (0.0, -1.2, 0.0)
-    u = (1.0, 0.0, 0.0)
-    v = (0.0, 0.0, -1.0)
+    origin = (-5.0, 0.0, 5.0)
+    u = (10.0, 0.0, 0.0)
+    v = (0.0, 0.0, -10.0)
     material = physically {
-        reflectivity = (0.8, 0.8, 0.8)
-        roughness = 0.6
+        reflectivity = (1.0, 1.0, 1.0)
+        roughness = 0.8
+        metalness = 0.0
+    }
+}
+
+plane {
+    origin = (-5.0, 0.0, -5.0)
+    u = (10.0, 0.0, 0.0)
+    v = (0.0, 10.0, 0.0)
+    material = physically {
+        reflectivity = (1.0, 1.0, 1.0)
+        roughness = 0.8
+        metalness = 0.0
+    }
+}
+
+
+plane {
+    origin = (-5.0, 0.0, -5.0)
+    u = (0.0, 10.0, 0.0)
+    v = (0.0, 0.0, 10.0)
+    material = physically {
+        reflectivity = (1.0, 0.0, 0.0)
+        roughness = 0.8
+        metalness = 0.0
+    }
+}
+
+plane {
+    origin = (5.0, 0.0, 5.0)
+    u = (0.0, 10.0, 0.0)
+    v = (0.0, 0.0, -10.0)
+    material = physically {
+        reflectivity = (0.0, 1.0, 0.0)
+        roughness = 0.8
+        metalness = 0.0
+    }
+}
+
+plane {
+    origin = (5.0, 0.0, 5.0)
+    u = (-10.0, 0.0, 0.0)
+    v = (0.0, 10.0, 0.0)
+    material = physically {
+        reflectivity = (1.0, 1.0, 1.0)
+        roughness = 0.8
         metalness = 0.0
     }
 }
 
 // Glass
 sphere {
-    origin = (-0.2, 0.05, 3.0)
-    radius = 1.0
+    origin = (2.0, 2.0, 0.0)
+    radius = 2.0
     material = translucent {
         ior = 1.5
     }
@@ -46,31 +110,31 @@ sphere {
 
 // Red
 sphere {
-    origin = (-2.2, 1.2, -0.5)
+    origin = (-2.2, 6.2, -0.5)
     radius = 2.0
     material = physically {
-        reflectivity = (1.00, 0.71, 0.29)	
-        roughness = 0.05
+        reflectivity = (1.0, 1.0, 1.0)	
+        roughness = 0.5
         metalness = 1.0
     }
 }
 
 // Light
-sphere {
-    origin = (0.5, 2.4, 3.0)
-    radius = 1.2
-    material = emissive {
-        radiance = (20.0, 20.0, 10.0)
-    }
-}
+//sphere {
+//    origin = (0.5, 3.4, 3.0)
+//    radius = 1.2
+//    material = emissive {
+//        radiance = (20.0, 20.0, 10.0)
+//    }
+//}
 
 // Mirror
 sphere {
-    origin = (1.5, -0.35, 6.0)
-    radius = 0.8
+    origin = (-1.8, 1.5, 3.0)
+    radius = 1.5
     material = physically {
         reflectivity = (0.95, 0.93, 0.88)
-        roughness = 0.2
+        roughness = 0.0
         metalness = 1.0
     }
 }
