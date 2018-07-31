@@ -54,8 +54,10 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
 
     let mut spheres = Vec::new();
     let mut planes = Vec::new();
+    let mut emissive_spheres = Vec::new();
+    let mut emissive_planes = Vec::new();
     let mut sky = Sky::Constant(Vec3::new(1.0, 1.0, 1.0));
-    let mut camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Clamp);
+    let mut camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Clamp, 100.0);
 
     // @TODO: This structure is needed more often. There should be a function doing this.
     loop {
@@ -65,13 +67,21 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
         }
 
         if let Ok((sphere, context)) = parse_free_and_sphere(&context) {
-            spheres.push(sphere);
+            if let Material::Emissive(_) = sphere.material {
+                emissive_spheres.push(sphere);
+            } else {
+                spheres.push(sphere);
+            }
             running_context = context;
             continue;
         }
 
         if let Ok((plane, context)) = parse_free_and_plane(&context) {
-            planes.push(plane);
+            if let Material::Emissive(_) = plane.material {
+                emissive_planes.push(plane);
+            } else {
+                planes.push(plane);
+            }
             running_context = context;
             continue;
         }
@@ -91,7 +101,7 @@ pub fn parse_scene(content: &str) -> Result<Scene, ParseError> {
         return Err(ParseError::new(String::from("Expected \"camera\", \"sphere\", \"plane\" or \"sky\"."), context.position));
     }
 
-    Ok(Scene::new(camera, sky, spheres, planes))
+    Ok(Scene::new(camera, sky, spheres, planes, emissive_spheres, emissive_planes))
 }
 
 fn parse_free_and_camera<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Camera> {
@@ -127,10 +137,14 @@ fn parse_free_and_camera<'a>(context: &ParseContext<'a>) -> ParseResult<'a, Came
     let (_           , context) = parse_free_and_string(&context, "tone_mapping")?;
     let (_           , context) = parse_free_and_string(&context, "=")?;
     let (tone_mapping, context) = parse_free_and_tone_mapping(&context)?;
+    
+    let (_           , context) = parse_free_and_string(&context, "iso")?;
+    let (_           , context) = parse_free_and_string(&context, "=")?;
+    let (iso         , context) = parse_free_and_f32(&context)?;
 
     let (_           , context) = parse_free_and_string(&context, "}")?;
 
-    success(Camera::new(position, target, up, width, height, z_near, tone_mapping), context)
+    success(Camera::new(position, target, up, width, height, z_near, tone_mapping, iso), context)
 }
 
 fn parse_free_and_tone_mapping<'a>(context: &ParseContext<'a>) -> ParseResult<'a, ToneMapping> {

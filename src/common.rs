@@ -47,6 +47,15 @@ pub fn saturatef32(x: f32) -> f32 {
     clampf32(0.0, 1.0, x)
 }
 
+#[allow(dead_code)]
+pub fn saturate_vec3(v: Vec3) -> Vec3 {
+    Vec3::new(
+        clampf32(0.0, 1.0, v.x),
+        clampf32(0.0, 1.0, v.y),
+        clampf32(0.0, 1.0, v.z),
+    )
+}
+
 pub fn mix_vec3(a: Vec3, b: Vec3, x: f32) -> Vec3 {
     (1.0 - x)*a + x*b
 }

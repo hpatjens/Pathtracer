@@ -36,8 +36,8 @@ fn load_scene(filename: &str) -> Result<scene::Scene, String> {
 }
 
 pub fn start() {
-    let width: u32 = 512;
-    let height: u32 = 512;
+    let width: u32 = 1024;
+    let height: u32 = 1024;
 
     //
     // READING THE COMMAND LINE ARGUMENTS

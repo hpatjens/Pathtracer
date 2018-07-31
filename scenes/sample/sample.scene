@@ -16,9 +16,8 @@ camera {
     width = 5.0
     height = 5.0
     z_near = 5.0
-    tone_mapping = exposure {
-        value = 1.0
-    }
+    tone_mapping = clamp
+    iso = 200.0
 }
 
 // Ceiling
@@ -113,9 +112,9 @@ sphere {
     origin = (-2.2, 6.2, -0.5)
     radius = 2.0
     material = physically {
-        reflectivity = (1.0, 1.0, 1.0)	
-        roughness = 0.5
-        metalness = 1.0
+        reflectivity = (1.0, 0.79, 0.74)	
+        roughness = 0.0
+        metalness = 0.0
     }
 }
 
@@ -124,7 +123,7 @@ sphere {
 //    origin = (0.5, 3.4, 3.0)
 //    radius = 1.2
 //    material = emissive {
-//        radiance = (20.0, 20.0, 10.0)
+//        radiance = (2.0, 2.0, 1.0)
 //    }
 //}
 

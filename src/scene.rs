@@ -91,12 +91,38 @@ pub enum Material {
     Physically(PBRParameters),
 }
 
-#[derive(Clone, Debug, new)]
+// @TODO: Distinguish finite and infinite planes
+#[derive(Clone, Debug)]
 pub struct Plane {
     pub origin: Vec3,
     pub u: Vec3,
     pub v: Vec3,
     pub material: Material,
+    pub normal: Vec3,
+}
+
+impl Plane {
+    pub fn new(origin: Vec3, u: Vec3, v: Vec3, material: Material) -> Self {
+        let normal = u.cross(v).normalize();
+        Plane {
+            origin: origin,
+            u: u,
+            v: v,
+            material: material,
+            normal: normal,
+        }
+    }
+
+    pub fn sample(&self, position: Vec3) -> Option<Vec3> {
+        if (self.origin - position).dot(self.normal) < 0.0 {
+            None
+        } else {
+            let r1 = random32();
+            let r2 = random32();
+
+            Some(self.origin + r1*self.u + r2*self.v)
+        }
+    }
 }
 
 #[derive(Clone, Debug, new)]
@@ -106,18 +132,36 @@ pub struct Sphere {
     pub material: Material,
 }
 
+impl Sphere {
+    pub fn sample(&self, _position: Vec3) -> Option<Vec3> {
+        let r1 = random32();
+        let r2 = random32();
+
+        let theta = 2.0*PI*r1;
+        let phi = f32::acos(2.0*r2 - 1.0);
+
+        Some(Vec3::new(
+            f32::sin(theta)*f32::cos(phi),
+            f32::cos(theta),
+            f32::sin(theta)*f32::sin(phi),
+        ))
+    }
+}
+
 #[derive(Debug, new)]
 pub struct Scene {
     pub camera: Camera,
     pub sky: Sky,
     pub spheres: Vec<Sphere>,
     pub planes: Vec<Plane>,
+    pub emissive_spheres: Vec<Sphere>,
+    pub emissive_planes: Vec<Plane>,
 }
 
 impl Default for Scene {
     fn default() -> Self {
-        let camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Exposure(1.0));
-        Scene::new(camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new())
+        let camera = Camera::new(Vec3::new(0.0, 2.0, 20.0), Vec3::zero(), Vec3::new(0.0, 1.0, 0.0), 4.0, 4.0, 10.0, ToneMapping::Exposure(1.0), 100.0);
+        Scene::new(camera, Sky::Constant(Vec3::new(1.0, 1.0, 1.0)), Vec::new(), Vec::new(), Vec::new(), Vec::new())
     }
 }
 
@@ -158,7 +202,7 @@ fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
 }
 
 fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
-    let n = plane.u.cross(plane.v).normalize();
+    let n = plane.normal;
     let s = plane.origin;
     
     let p = ray.origin;
@@ -200,7 +244,7 @@ fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {
 pub fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {
     let mut nearest_hit: Option<Hit> = None;
 
-    for sphere in &scene.spheres {
+    for sphere in scene.spheres.iter().chain(scene.emissive_spheres.iter()) {
         if let Some(hit) = intersect_sphere(sphere, &ray) {
             nearest_hit = if let Some(nearest_hit) = nearest_hit {
                 if hit.parameter < nearest_hit.parameter {
@@ -214,7 +258,7 @@ pub fn find_scene_hit<'a>(ray: &Ray, scene: &'a Scene) -> Option<Hit<'a>> {
         }
     }
 
-    for plane in &scene.planes {
+    for plane in scene.planes.iter().chain(scene.emissive_planes.iter()) {
         if let Some(hit) = intersect_plane(plane, &ray) {
             if hit.transition == Transition::In {
                 nearest_hit = if let Some(nearest_hit) = nearest_hit {

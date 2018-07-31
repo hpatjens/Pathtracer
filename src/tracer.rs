@@ -55,10 +55,11 @@ pub struct Camera {
     height: f32,
     z_near: f32,
     tone_mapping: ToneMapping,
+    iso: f32,
 }
 
 impl Camera {
-    pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32, tone_mapping: ToneMapping) -> Self {
+    pub fn new(position: Vec3, target: Vec3, up: Vec3, width: f32, height: f32, z_near: f32, tone_mapping: ToneMapping, iso: f32) -> Self {
         Camera {
             projection_plane: Self::construct_projection_plane(position, target, up, width, height, z_near),
             position: position,
@@ -66,6 +67,7 @@ impl Camera {
             height: height,
             z_near: z_near,
             tone_mapping: tone_mapping,
+            iso: iso,
         }
     }
 
@@ -252,15 +254,15 @@ impl Backbuffer {
         }
     }
 
-    fn assign_pixel8_unsafe(&self, x: u32, y: u32) {
+    fn assign_pixel8_unsafe(&self, x: u32, y: u32, iso_factor: f32) {
         let index = (y*self.width + x) as usize;
         unsafe {
             let num_samples = *self.num_samples.get() as u32;
             let ref pixel32 = (*self.pixels32.get())[index];
             (*self.pixels8.get())[index] = Pixel8(
-                (pixel32.0 / num_samples) as u8,
-                (pixel32.1 / num_samples) as u8,
-                (pixel32.2 / num_samples) as u8,
+                f32::min(255.0, iso_factor*pixel32.0 as f32 / num_samples as f32) as u8,
+                f32::min(255.0, iso_factor*pixel32.1 as f32 / num_samples as f32) as u8,
+                f32::min(255.0, iso_factor*pixel32.2 as f32 / num_samples as f32) as u8,
             );
         }
     }
@@ -433,7 +435,45 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     // @TODO: Find all the places where NANs can be generated and fix as many as it makes sense.
 
     if depth <= 0 {
-        return Vec3::zero();
+        let num_light_sources = scene.emissive_spheres.len() + scene.emissive_planes.len();        
+        let r = xorshift32() as usize % num_light_sources;
+
+        let (sample_point, light_radiance) = if r < scene.emissive_spheres.len() {
+            let ref light = scene.emissive_spheres[r];
+            let radiance = match light.material {
+                Material::Emissive(radiance) => radiance,
+                _ => panic!("Non-emissive material in emissive material Vec."),
+            };
+            (light.sample(ray.origin), radiance)
+        } else {
+            let ref light = scene.emissive_planes[r];
+            let radiance = match light.material {
+                Material::Emissive(radiance) => radiance,
+                _ => panic!("Non-emissive material in emissive material Vec."),
+            };
+            (light.sample(ray.origin), radiance)
+        };
+
+        let sample_point = if let Some(point) = sample_point {
+            point
+        } else {
+            return Vec3::zero()
+        };
+
+        let light_ray = sample_point - ray.origin;
+        let light_distance = light_ray.length();
+
+        let ray = Ray::new(ray.origin, light_ray.normalize());
+        return if let Some(nearest_hit) = find_scene_hit(&ray, scene) { // @TODO: Make a function for finding any hit.
+            // @TODO: This should not be done by distance but by object id
+            if nearest_hit.parameter > light_distance - 0.0001 {
+                light_radiance
+            } else {
+                Vec3::zero()
+            }
+        } else {
+            Vec3::zero()
+        }
     }
 
     let nearest_hit = find_scene_hit(ray, scene);
@@ -483,14 +523,16 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let PBRParameters{ reflectivity, roughness, metalness } = *pbr_parameters;
                 let f0 = mix_vec3(Vec3::new(R, R, R), reflectivity, metalness);
 
-                let (l_spec, k_spec) = {
+                // Decide whether this reflection is specular or diffuse
+                let specular_reflection = random32() < f0.as_array()[(xorshift32() % 3) as usize];
+
+                if specular_reflection {
                     let xi = Vec2::new(random32(), random32());
 
                     // Half vector for the reflection
                     let h = to_basis(tangent_space, importance_sample_ggx(xi, pbr_parameters.roughness));
 
-                    // The reflection direction is called light. Not to be 
-                    // confused  with a ray towards a light source.
+                    // The reflection direction is called light. Not to be confused  with a ray towards a light source.
                     let light = reflect(ray.direction, h);
                    
                     let light_ray = Ray::new(outwards_shifted_position(), light);
@@ -499,16 +541,8 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                     let light_radiance = trace_radiance(meta, &light_ray, scene, depth - 1);
 
                     // The cos(theta) was canceled out as it is in the denominator of the Cook-Torrance BRDF.
-                    // @TODO: Does this have to be multiplied by PI or 2*PI?
-                    let f_r = brdf_cook_torrance(view, light, normal, reflectivity, roughness, f0);
-
-                    // The cosine between light and normal was canceled out by the BRDF.
-                    let l_spec = f_r*light_radiance*PI;
-
-                    (l_spec, f0)
-                };
-
-                let (l_diff, k_diff) = {
+                    PI*brdf_cook_torrance(view, light, normal, reflectivity, roughness, f0)*light_radiance
+                } else {
                     let xi = Vec2::new(random32(), random32());
 
                     let light = to_basis(tangent_space, importance_sample_cos(xi));
@@ -517,16 +551,8 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
 
                     let light_radiance = trace_radiance(meta, &light_ray, scene, depth - 1);
 
-                    let k_diff = Vec3::one() - k_spec;
-
-                    // Diffuse reflection:
-                    // @TODO: Does this have to be multiplied by PI or 2*PI?
-                    let l_diff = brdf_lambert(pbr_parameters)*light_radiance*light_cos_theta*PI;
-
-                    (l_diff, k_diff)
-                };
-
-                k_spec*l_spec + k_diff*l_diff
+                    PI*brdf_lambert(pbr_parameters)*light_radiance*light_cos_theta
+                }
             },
         }
     } else {
@@ -579,6 +605,8 @@ fn gamma_correction(radiance: Vec3) -> Vec3 {
 pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, scene: Arc<RwLock<Scene>>) {
     let scene = scene.read().unwrap(); // @TODO: Handle the unwrap
 
+    let iso_factor = scene.camera.iso/100.0;
+
     let sampler = scene.camera.sample(backbuffer.width, backbuffer.height);
 
     let (x0, x1) = (work_tile.position.x, work_tile.position.x + work_tile.size.x);
@@ -587,25 +615,20 @@ pub fn render(work_tile: WorkTile, backbuffer: &Arc<Backbuffer>, scene: Arc<RwLo
     for y in y0..y1 {
         for x in x0..x1 {
             let ray = sampler.pinhole_ray(x, y);
+            let meta = Meta::new(Vec2u::new(x, y), 1);
 
-            let hdr_radiance = {
-                const N: usize = 1;
-                let mut hdr_radiance = Vec3::zero();
-                for s in 0..N {
-                    let meta = Meta::new(Vec2u::new(x, y), s);
-                    hdr_radiance += trace_radiance(&meta, &ray, &*scene, 5);
-                }
-                hdr_radiance / N as f32
-            };
+            let hdr_radiance = trace_radiance(&meta, &ray, &*scene, 4);
             let ldr_radiance = match scene.camera.tone_mapping {
                 ToneMapping::Clamp => tone_map_clamp(hdr_radiance),
                 ToneMapping::Reinhard => tone_map_reinhard(hdr_radiance),
                 ToneMapping::Exposure(value) => tone_map_exposure(hdr_radiance, value),
             };
+
             let gamma_corrected = gamma_correction(ldr_radiance);
             let color = Pixel32::from_unit(gamma_corrected);
+
             backbuffer.add_pixel32_unsafe(x, y, color);
-            backbuffer.assign_pixel8_unsafe(x, y);
+            backbuffer.assign_pixel8_unsafe(x, y, iso_factor);
         }
     }
 }
