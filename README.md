@@ -1,3 +1,3 @@
 # Pathtracer
 
-![render_3](docs/3.jpg "Render 3")
+![render_4](docs/4.jpg "Render 4")
