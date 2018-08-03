@@ -392,7 +392,7 @@ fn fresnel_schlick(cos_theta: f32, f0: Vec3) -> Vec3 {
     f0 + (Vec3::one() - f0)*f32::powf(1.0 - cos_theta, 5.0)
 }
 
-fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, reflectivity: Vec3, roughness: f32, f0: Vec3) -> Vec3 {
+fn brdf_cook_torrance(view: Vec3, light: Vec3, normal: Vec3, roughness: f32, f0: Vec3) -> Vec3 {
     // Bear in mind that 'view' as well as 'light' are pointing away from the surface!
 
     let v = view;
@@ -449,6 +449,7 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
     // @TODO: Find all the places where NANs can be generated and fix as many as it makes sense.
 
     if depth <= 0 {
+        // @TODO: This is really wrong but works for now.
         let num_light_sources = scene.emissive_spheres.len() + scene.emissive_planes.len();        
         let r = xorshift32() as usize % num_light_sources;
 
@@ -480,7 +481,7 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         let ray = Ray::new(ray.origin, light_ray.normalize());
         return if let Some(nearest_hit) = find_scene_hit(&ray, scene) { // @TODO: Make a function for finding any hit.
             // @TODO: This should not be done by distance but by object id
-            if nearest_hit.parameter > light_distance - 0.0001 {
+            if nearest_hit.parameter > light_distance - 0.000001 {
                 light_radiance
             } else {
                 Vec3::zero()
@@ -490,9 +491,7 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
         }
     }
 
-    let nearest_hit = find_scene_hit(ray, scene);
-
-    if let Some(nearest_hit) = nearest_hit {
+    if let Some(nearest_hit) = find_scene_hit(ray, scene) {
         const SHIFT_AMOUNT: f32 = 0.0001; // @TODO: Find a good factor and maybe make it dependent on the slope
         let outwards_shifted_position = ||{ nearest_hit.position + SHIFT_AMOUNT*nearest_hit.normal };
         let inwards_shifted_position  = ||{ nearest_hit.position - SHIFT_AMOUNT*nearest_hit.normal };
@@ -506,25 +505,32 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
             },
             Material::Mirror => {
                 let reflection_direction = reflect(ray.direction, nearest_hit.normal);
-                trace_radiance(meta, &Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1)
+                let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction.normalize());
+                trace_radiance(meta, &reflection_ray, scene, depth - 1)
             },
             Material::Translucent(ior) => {
-                let cos_theta = nearest_hit.normal.dot(-ray.direction);
-                let fresnel = fresnel_schlick(cos_theta, Vec3::new(R, R, R));
-
+                // Refraction
                 const IOR_AIR: f32 = 1.0;
                 let (n1, n2) = match nearest_hit.transition {
                     Transition::In  => (IOR_AIR, *ior),
                     Transition::Out => (*ior, IOR_AIR),
                 };
 
-                let k_refl = fresnel;
-                let reflection_direction = reflect(ray.direction, nearest_hit.normal);
-                let l_refl = trace_radiance(meta, &Ray::new(outwards_shifted_position(), reflection_direction), scene, depth - 1);
+                let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);
+                let refraction_ray = Ray::new(inwards_shifted_position(), refraction_direction.normalize());
+                let l_refr = trace_radiance(meta, &refraction_ray, scene, depth - 1);
 
+                // Reflection
+                let reflection_direction = reflect(ray.direction, nearest_hit.normal);
+                let reflection_ray = Ray::new(outwards_shifted_position(), reflection_direction.normalize());
+                let l_refl = trace_radiance(meta, &reflection_ray, scene, depth - 1);
+
+                // Fresnel
+                let cos_theta = f32::max(0.0, nearest_hit.normal.dot(-ray.direction));
+                let fresnel = fresnel_schlick(cos_theta, Vec3::new(R, R, R));
+
+                let k_refl = fresnel;
                 let k_refr = Vec3::one() - fresnel;
-                let refraction_direction = refract(ray.direction, nearest_hit.normal, n1, n2);                
-                let l_refr = trace_radiance(meta, &Ray::new(inwards_shifted_position(), refraction_direction), scene, depth - 1);
 
                 k_refl*l_refl + k_refr*l_refr
             },
@@ -537,32 +543,25 @@ fn trace_radiance(meta: &Meta, ray: &Ray, scene: &Scene, depth: u8) -> Vec3 {
                 let PBRParameters{ reflectivity, roughness, metalness } = *pbr_parameters;
                 let f0 = mix_vec3(Vec3::new(R, R, R), reflectivity, metalness);
 
-                // Decide whether this reflection is specular or diffuse
+                let xi = Vec2::new(random32(), random32());
+
+               // Decide whether this reflection is specular or diffuse
                 let specular_reflection = random32() < f0.as_array()[(xorshift32() % 3) as usize];
-
                 if specular_reflection {
-                    let xi = Vec2::new(random32(), random32());
-
                     // Half vector for the reflection
                     let h = to_basis(tangent_space, importance_sample_ggx(xi, pbr_parameters.roughness));
 
                     // The reflection direction is called light. Not to be confused  with a ray towards a light source.
                     let light = reflect(ray.direction, h);
-                   
-                    let light_ray = Ray::new(outwards_shifted_position(), light);
-                    let light_cos_theta = light.dot(normal);
-
+                    let light_ray = Ray::new(outwards_shifted_position(), light.normalize());
                     let light_radiance = trace_radiance(meta, &light_ray, scene, depth - 1);
 
                     // The cos(theta) was canceled out as it is in the denominator of the Cook-Torrance BRDF.
-                    PI*brdf_cook_torrance(view, light, normal, reflectivity, roughness, f0)*light_radiance
+                    PI*brdf_cook_torrance(view, light, normal, roughness, f0)*light_radiance
                 } else {
-                    let xi = Vec2::new(random32(), random32());
-
                     let light = to_basis(tangent_space, importance_sample_cos(xi));
-                    let light_ray = Ray::new(outwards_shifted_position(), light);
+                    let light_ray = Ray::new(outwards_shifted_position(), light.normalize());
                     let light_cos_theta = light.dot(normal);
-
                     let light_radiance = trace_radiance(meta, &light_ray, scene, depth - 1);
 
                     PI*brdf_lambert(pbr_parameters)*light_radiance*light_cos_theta

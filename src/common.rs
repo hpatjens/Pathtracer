@@ -9,10 +9,19 @@ pub type Vec3 = Vector3<f32>;
 
 pub type Vec2u = Vector2<u32>;
 
-#[derive(Clone, Debug, new)]
+#[derive(Clone, Debug)]
 pub struct Ray {
     pub origin: Vec3,
     pub direction: Vec3,
+}
+
+impl Ray {
+    pub fn new(origin: Vec3, direction: Vec3) -> Self {
+        Ray {
+            origin: origin,
+            direction: direction,
+        }
+    }
 }
 
 // Source: https://de.wikipedia.org/wiki/Xorshift
@@ -70,4 +79,10 @@ impl Pixel32 {
     pub fn from_unit(color: Vec3) -> Self {
         Pixel32((color.x*255.0) as u32, (color.y*255.0) as u32, (color.z*255.0) as u32)
     }
+}
+
+#[allow(dead_code)]
+pub fn is_normalized(v: Vec3) -> bool {
+    let v_len = v.length();
+    v_len > 0.99 && v_len < 1.01
 }

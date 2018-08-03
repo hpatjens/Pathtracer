@@ -167,39 +167,57 @@ impl Default for Scene {
 }
 
 fn intersect_sphere<'a>(sphere: &'a Sphere, ray: &Ray) -> Option<Hit<'a>> {
-    let to_center = sphere.origin - ray.origin;
-    let projection = ray.direction.dot(to_center);
-    if projection < 0.0 {
+    let s = sphere.origin;
+    let r = sphere.radius;
+    let p = ray.origin;
+    let d = ray.direction;
+
+    let c = s - p;
+
+    let e_len = d.dot(c);
+    // When the projection is negative, the ray is pointing away from the sphere
+    // but the origin of the ray might be inside the sphere. However, a projection
+    // less than -r means that the origin of the sphere is at least r behind the
+    // origin of the ray and therefore cannot possibly intersect.
+    if e_len < -r {
+        return None;
+    }
+    let e = e_len*d;
+
+    let v = e - c;
+    let v_len = v.length(); // @TODO: Can be squared
+    // v is the vector that is pointing from the center of the sphere to the point 
+    // on the ray which is closest to the center of the sphere. This point might be 
+    // inside of the sphere or outside. However, when the magnitude is less than 
+    // the radius of the sphere, the point cannot be inside the sphere.
+    if v_len > r {
         return None;
     }
 
-    let on_ray_to_center = projection*ray.direction;
-    let to_inner_hit = to_center - on_ray_to_center;
-    let inner_hit_distance = to_inner_hit.length();
-    if inner_hit_distance > sphere.radius {
-        return None;
-    }
+    // To find the intersection points of the sphere, the distance from the nearest
+    // point on the ray to the intersection points is computed. This is done by
+    // rearanging the Pythagorean theorem. The hypothenuse is the radius of the
+    // sphere and one cathetus is the distance from the center of the sphere to
+    // the closest point on the ray to the center of the sphere.
+    let b = f32::sqrt(r*r - v_len*v_len); // @TODO: Try this with a lower quality sqrt function
 
-    let on_ray_in_sphere = f32::sqrt(sphere.radius*sphere.radius - inner_hit_distance*inner_hit_distance);
-    let t1 = projection - on_ray_in_sphere;
-    let t2 = projection + on_ray_in_sphere;
+    let t1 = e_len - b;
+    let t2 = e_len + b;
 
-    let mut parameter = -2.0;
-    if t1 > parameter && t1 > 0.0 { parameter = t1; }
-    if t2 < parameter && t2 > 0.0 { parameter = t2; }
-    if parameter < -1.0 {
-        return None;
-    }
-
-    let position = ray.origin + parameter*ray.direction;
     let material = &sphere.material;
-    let mut normal = (position - sphere.origin).normalize();
-    let mut transition = Transition::In;
-    if ray.direction.dot(normal) > 0.0 { 
-        normal = -normal;
-        transition = Transition::Out;
+
+    // Find the closest of both hit points
+    if t1 >= 0.0 {
+        let position = p + t1*d;
+        let normal = (position - sphere.origin).normalize(); // @TODO: Optimize
+        Some(Hit::new(t1, position, normal, material, Transition::In))
+    } else if t2 >= 0.0 { 
+        let position = p + t2*d;
+        let normal = (sphere.origin - position).normalize();// @TODO: Optimize
+        Some(Hit::new(t2, position, normal, material, Transition::Out))
+    } else {
+        None
     }
-    Some(Hit::new(parameter, position, normal, material, transition))
 }
 
 fn intersect_plane<'a>(plane: &'a Plane, ray: &Ray) -> Option<Hit<'a>> {

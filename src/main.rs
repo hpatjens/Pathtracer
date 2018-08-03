@@ -8,8 +8,8 @@ extern crate time;
 extern crate notify;
 extern crate stb_image;
 
-mod window;
 mod common;
+mod window;
 mod scene;
 mod worker;
 mod tracer;
